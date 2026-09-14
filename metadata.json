@@ -1,0 +1,6 @@
+{
+  "name": "Data Structures & Array Mastery",
+  "description": "Interactive learning portal for C++ Data Structures and Array implementations.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
