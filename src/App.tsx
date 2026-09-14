@@ -1,53 +1,72 @@
-import React, { useState, useEffect, useMemo } from 'react';
-import { modulesData } from './data/modules';
-import { Module, Task, SimulationFrame, TaskDifficulty } from './types';
-import CodeSandbox from './components/CodeSandbox';
-import VisualSimulator from './components/VisualSimulator';
-import Chatbot from './components/Chatbot';
-import StudyDocs from './components/StudyDocs';
-import MasteryProgressChart, { ProgressHistoryEntry } from './components/MasteryProgressChart';
-import { ExecutionResult } from './lib/cppInterpreter';
-import { BookOpen, Code2, Trophy, FileText, CheckCircle2, Filter, Gauge, Sparkles, BarChart3, Keyboard, X } from 'lucide-react';
-import { cn } from './lib/utils';
+import React, { useState, useEffect, useMemo } from "react";
+import { modulesData } from "./data/modules";
+import { Module, Task, SimulationFrame, TaskDifficulty } from "./types";
+import CodeSandbox from "./components/CodeSandbox";
+import VisualSimulator from "./components/VisualSimulator";
+import Chatbot from "./components/Chatbot";
+import StudyDocs from "./components/StudyDocs";
+import MasteryProgressChart, {
+  ProgressHistoryEntry,
+} from "./components/MasteryProgressChart";
+import { ExecutionResult } from "./lib/cppInterpreter";
+import {
+  BookOpen,
+  Code2,
+  Trophy,
+  FileText,
+  CheckCircle2,
+  Filter,
+  Gauge,
+  Sparkles,
+  BarChart3,
+  Keyboard,
+  X,
+} from "lucide-react";
+import { cn } from "./lib/utils";
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'learn' | 'summarize'>('learn');
+  const [activeTab, setActiveTab] = useState<"learn" | "summarize">("learn");
   const [activeModule, setActiveModule] = useState<Module>(modulesData[0]);
   const [activeTask, setActiveTask] = useState<Task>(modulesData[0].tasks[0]);
-  const [difficultyFilter, setDifficultyFilter] = useState<'All' | TaskDifficulty>('All');
+  const [difficultyFilter, setDifficultyFilter] = useState<
+    "All" | TaskDifficulty
+  >("All");
   const [showProgressModal, setShowProgressModal] = useState<boolean>(false);
   const [shortcutToast, setShortcutToast] = useState<string | null>(null);
 
   const [isRunning, setIsRunning] = useState(false);
-  const [currentFrames, setCurrentFrames] = useState<SimulationFrame[]>(modulesData[0].tasks[0].frames);
-  const [currentStdout, setCurrentStdout] = useState<string>('');
+  const [currentFrames, setCurrentFrames] = useState<SimulationFrame[]>([]);
+  const [currentStdout, setCurrentStdout] = useState<string>("");
   const [currentFeedback, setCurrentFeedback] = useState<string | null>(null);
   const [isGoalAchieved, setIsGoalAchieved] = useState<boolean>(false);
 
   // Time complexity state
-  const [submittedTimeComplexity, setSubmittedTimeComplexity] = useState<string>(
-    modulesData[0].tasks[0].optimalTimeComplexity
-  );
+  const [submittedTimeComplexity, setSubmittedTimeComplexity] =
+    useState<string>(modulesData[0].tasks[0].optimalTimeComplexity);
   const [optimalTimeComplexity, setOptimalTimeComplexity] = useState<string>(
     modulesData[0].tasks[0].optimalTimeComplexity
   );
-  const [timeComplexityStatus, setTimeComplexityStatus] = useState<'optimal' | 'suboptimal' | 'unknown'>('optimal');
+  const [timeComplexityStatus, setTimeComplexityStatus] = useState<
+    "optimal" | "suboptimal" | "unknown"
+  >("optimal");
   const [timeComplexityAnalysis, setTimeComplexityAnalysis] = useState<string>(
-    modulesData[0].tasks[0].complexityNotes || ''
+    modulesData[0].tasks[0].complexityNotes || ""
   );
 
   const [completedTasks, setCompletedTasks] = useState<Set<string>>(() => {
     try {
-      const saved = localStorage.getItem('completedTasks');
+      const saved = localStorage.getItem("completedTasks");
       return saved ? new Set(JSON.parse(saved)) : new Set();
     } catch {
       return new Set();
     }
   });
 
-  const [progressHistory, setProgressHistory] = useState<ProgressHistoryEntry[]>(() => {
+  const [progressHistory, setProgressHistory] = useState<
+    ProgressHistoryEntry[]
+  >(() => {
     try {
-      const saved = localStorage.getItem('progressHistory');
+      const saved = localStorage.getItem("progressHistory");
       return saved ? JSON.parse(saved) : [];
     } catch {
       return [];
@@ -56,7 +75,7 @@ export default function App() {
 
   const [notes, setNotes] = useState<Record<string, string>>(() => {
     try {
-      const saved = localStorage.getItem('notes');
+      const saved = localStorage.getItem("notes");
       return saved ? JSON.parse(saved) : {};
     } catch {
       return {};
@@ -66,17 +85,23 @@ export default function App() {
   const [chatbotPrompt, setChatbotPrompt] = useState<string | null>(null);
 
   useEffect(() => {
-    localStorage.setItem('completedTasks', JSON.stringify(Array.from(completedTasks)));
+    localStorage.setItem(
+      "completedTasks",
+      JSON.stringify(Array.from(completedTasks))
+    );
   }, [completedTasks]);
 
   useEffect(() => {
-    localStorage.setItem('notes', JSON.stringify(notes));
+    localStorage.setItem("notes", JSON.stringify(notes));
   }, [notes]);
 
   // Keep progress history updated as tasks are completed
   useEffect(() => {
-    const today = new Date().toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-    setProgressHistory(prev => {
+    const today = new Date().toLocaleDateString(undefined, {
+      month: "short",
+      day: "numeric",
+    });
+    setProgressHistory((prev) => {
       const last = prev[prev.length - 1];
       if (last && last.date === today) {
         const updated = [...prev];
@@ -85,15 +110,22 @@ export default function App() {
           completedCount: completedTasks.size,
           timestamp: Date.now(),
         };
-        try { localStorage.setItem('progressHistory', JSON.stringify(updated)); } catch {}
+        try {
+          localStorage.setItem("progressHistory", JSON.stringify(updated));
+        } catch {}
         return updated;
       } else {
-        const next = [...prev, {
-          date: today,
-          timestamp: Date.now(),
-          completedCount: completedTasks.size,
-        }];
-        try { localStorage.setItem('progressHistory', JSON.stringify(next)); } catch {}
+        const next = [
+          ...prev,
+          {
+            date: today,
+            timestamp: Date.now(),
+            completedCount: completedTasks.size,
+          },
+        ];
+        try {
+          localStorage.setItem("progressHistory", JSON.stringify(next));
+        } catch {}
         return next;
       }
     });
@@ -105,11 +137,20 @@ export default function App() {
       const isCtrlOrCmd = e.ctrlKey || e.metaKey;
 
       // 1. Ctrl+D (or Cmd+D): Toggle between Interactive Labs and Study Docs
-      if (isCtrlOrCmd && (e.key === 'd' || e.key === 'D') && !e.shiftKey && !e.altKey) {
+      if (
+        isCtrlOrCmd &&
+        (e.key === "d" || e.key === "D") &&
+        !e.shiftKey &&
+        !e.altKey
+      ) {
         e.preventDefault();
-        setActiveTab(prev => {
-          const nextTab = prev === 'learn' ? 'summarize' : 'learn';
-          setShortcutToast(`Switched to ${nextTab === 'learn' ? 'Interactive Labs' : 'Study Docs'} (Ctrl+D)`);
+        setActiveTab((prev) => {
+          const nextTab = prev === "learn" ? "summarize" : "learn";
+          setShortcutToast(
+            `Switched to ${
+              nextTab === "learn" ? "Interactive Labs" : "Study Docs"
+            } (Ctrl+D)`
+          );
           setTimeout(() => setShortcutToast(null), 2200);
           return nextTab;
         });
@@ -117,36 +158,36 @@ export default function App() {
       }
 
       // 2. Ctrl+Enter: Run and visualize code in sandbox
-      if (isCtrlOrCmd && e.key === 'Enter') {
+      if (isCtrlOrCmd && e.key === "Enter") {
         e.preventDefault();
-        window.dispatchEvent(new CustomEvent('app:run-code'));
+        window.dispatchEvent(new CustomEvent("app:run-code"));
         return;
       }
 
       // 3. Ctrl+Shift+L: Clear editor
-      if (isCtrlOrCmd && e.shiftKey && (e.key === 'l' || e.key === 'L')) {
+      if (isCtrlOrCmd && e.shiftKey && (e.key === "l" || e.key === "L")) {
         e.preventDefault();
-        window.dispatchEvent(new CustomEvent('app:clear-code'));
+        window.dispatchEvent(new CustomEvent("app:clear-code"));
         return;
       }
     };
 
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
   }, []);
 
   // Support shared task and code solution URLs (?task=...&code=...)
   useEffect(() => {
     try {
       const searchParams = new URLSearchParams(window.location.search);
-      const sharedTaskId = searchParams.get('task');
-      const sharedCodeParam = searchParams.get('code');
+      const sharedTaskId = searchParams.get("task");
+      const sharedCodeParam = searchParams.get("code");
 
       if (sharedTaskId) {
         for (const mod of modulesData) {
-          const matched = mod.tasks.find(t => t.id === sharedTaskId);
+          const matched = mod.tasks.find((t) => t.id === sharedTaskId);
           if (matched) {
-            setActiveTab('learn');
+            setActiveTab("learn");
             setActiveModule(mod);
 
             let restoredCode = matched.initialCode;
@@ -175,7 +216,7 @@ export default function App() {
         }
       }
     } catch (err) {
-      console.error('Failed to parse shared task URL:', err);
+      console.error("Failed to parse shared task URL:", err);
     }
   }, []);
 
@@ -189,40 +230,54 @@ export default function App() {
     for (const mod of modulesData) {
       for (const t of mod.tasks) {
         all++;
-        if (t.difficulty === 'Beginner') beginner++;
-        else if (t.difficulty === 'Intermediate') intermediate++;
-        else if (t.difficulty === 'Advanced') advanced++;
+        if (t.difficulty === "Beginner") beginner++;
+        else if (t.difficulty === "Intermediate") intermediate++;
+        else if (t.difficulty === "Advanced") advanced++;
       }
     }
-    return { All: all, Beginner: beginner, Intermediate: intermediate, Advanced: advanced };
+    return {
+      All: all,
+      Beginner: beginner,
+      Intermediate: intermediate,
+      Advanced: advanced,
+    };
   }, []);
 
   const filteredModules = useMemo(() => {
-    return modulesData.map(mod => {
-      const tasks = mod.tasks.filter(t => difficultyFilter === 'All' || t.difficulty === difficultyFilter);
-      return {
-        ...mod,
-        tasks,
-      };
-    }).filter(mod => mod.tasks.length > 0);
+    return modulesData
+      .map((mod) => {
+        const tasks = mod.tasks.filter(
+          (t) => difficultyFilter === "All" || t.difficulty === difficultyFilter
+        );
+        return {
+          ...mod,
+          tasks,
+        };
+      })
+      .filter((mod) => mod.tasks.length > 0);
   }, [difficultyFilter]);
 
   const handleSelectTask = (task: Task) => {
     setActiveTask(task);
     setIsRunning(false);
-    setCurrentFrames(task.frames);
-    setCurrentStdout('');
+    setCurrentFrames([]);
+    setCurrentStdout("");
     setCurrentFeedback(null);
     setIsGoalAchieved(false);
     setOptimalTimeComplexity(task.optimalTimeComplexity);
-    setSubmittedTimeComplexity(task.optimalTimeComplexity);
-    setTimeComplexityStatus('optimal');
-    setTimeComplexityAnalysis(task.complexityNotes || 'Benchmark optimal complexity for this algorithmic challenge.');
+    setSubmittedTimeComplexity("");
+    setTimeComplexityStatus("optimal");
+    setTimeComplexityAnalysis(
+      task.complexityNotes ||
+        "Benchmark optimal complexity for this algorithmic challenge."
+    );
   };
 
   const handleSelectModule = (mod: Module) => {
     setActiveModule(mod);
-    const availableTasks = mod.tasks.filter(t => difficultyFilter === 'All' || t.difficulty === difficultyFilter);
+    const availableTasks = mod.tasks.filter(
+      (t) => difficultyFilter === "All" || t.difficulty === difficultyFilter
+    );
     if (availableTasks.length > 0) {
       handleSelectTask(availableTasks[0]);
     } else if (mod.tasks.length > 0) {
@@ -251,7 +306,7 @@ export default function App() {
     }
 
     if (result.isTaskGoalAchieved) {
-      setCompletedTasks(prev => {
+      setCompletedTasks((prev) => {
         const newSet = new Set(prev);
         newSet.add(activeTask.id);
         return newSet;
@@ -261,13 +316,13 @@ export default function App() {
 
   const handleReset = () => {
     setIsRunning(false);
-    setCurrentFrames(activeTask.frames);
-    setCurrentStdout('');
+    setCurrentFrames([]);
+    setCurrentStdout("");
     setCurrentFeedback(null);
     setIsGoalAchieved(false);
-    setSubmittedTimeComplexity(activeTask.optimalTimeComplexity);
-    setTimeComplexityStatus('optimal');
-    setTimeComplexityAnalysis(activeTask.complexityNotes || '');
+    setSubmittedTimeComplexity("");
+    setTimeComplexityStatus("optimal");
+    setTimeComplexityAnalysis(activeTask.complexityNotes || "");
   };
 
   const handleRequestAI = (prompt: string) => {
@@ -275,15 +330,18 @@ export default function App() {
   };
 
   const handleNavigateFromGlossary = (moduleId: string, taskId?: string) => {
-    const targetModule = modulesData.find(m => m.id === moduleId);
+    const targetModule = modulesData.find((m) => m.id === moduleId);
     if (targetModule) {
       setActiveModule(targetModule);
       if (taskId) {
-        const targetTask = targetModule.tasks.find(t => t.id === taskId);
+        const targetTask = targetModule.tasks.find((t) => t.id === taskId);
         if (targetTask) {
           handleSelectTask(targetTask);
-          if (difficultyFilter !== 'All' && targetTask.difficulty !== difficultyFilter) {
-            setDifficultyFilter('All');
+          if (
+            difficultyFilter !== "All" &&
+            targetTask.difficulty !== difficultyFilter
+          ) {
+            setDifficultyFilter("All");
           }
         } else {
           handleSelectTask(targetModule.tasks[0]);
@@ -291,18 +349,18 @@ export default function App() {
       } else {
         handleSelectTask(targetModule.tasks[0]);
       }
-      setActiveTab('learn');
+      setActiveTab("learn");
     }
   };
 
   const getDifficultyBadge = (difficulty: TaskDifficulty) => {
     switch (difficulty) {
-      case 'Beginner':
-        return 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30';
-      case 'Intermediate':
-        return 'bg-amber-500/15 text-amber-300 border-amber-500/30';
-      case 'Advanced':
-        return 'bg-purple-500/15 text-purple-300 border-purple-500/30';
+      case "Beginner":
+        return "bg-emerald-500/15 text-emerald-300 border-emerald-500/30";
+      case "Intermediate":
+        return "bg-amber-500/15 text-amber-300 border-amber-500/30";
+      case "Advanced":
+        return "bg-purple-500/15 text-purple-300 border-purple-500/30";
     }
   };
 
@@ -334,27 +392,36 @@ export default function App() {
           <div className="flex items-center bg-slate-800/90 rounded-lg p-1 border border-slate-700/50">
             <button
               id="nav-interactive-labs"
-              onClick={() => setActiveTab('learn')}
+              onClick={() => setActiveTab("learn")}
               className={cn(
                 "px-3.5 py-1.5 rounded-md text-sm font-medium transition-colors flex items-center gap-1.5",
-                activeTab === 'learn' ? "bg-slate-700 text-white shadow-sm" : "text-slate-400 hover:text-slate-200"
+                activeTab === "learn"
+                  ? "bg-slate-700 text-white shadow-sm"
+                  : "text-slate-400 hover:text-slate-200"
               )}
             >
               Interactive Labs
             </button>
             <button
               id="nav-study-docs"
-              onClick={() => setActiveTab('summarize')}
+              onClick={() => setActiveTab("summarize")}
               className={cn(
                 "px-3.5 py-1.5 rounded-md text-sm font-medium transition-colors flex items-center gap-2",
-                activeTab === 'summarize' ? "bg-slate-700 text-white shadow-sm" : "text-slate-400 hover:text-slate-200"
+                activeTab === "summarize"
+                  ? "bg-slate-700 text-white shadow-sm"
+                  : "text-slate-400 hover:text-slate-200"
               )}
             >
               <FileText size={16} />
               <span>Study Docs & Glossary</span>
             </button>
-            <div className="hidden sm:flex items-center ml-1 pl-2 border-l border-slate-700/70 text-[10px] text-slate-400 font-mono" title="Shortcut to toggle views: Ctrl+D">
-              <kbd className="bg-slate-900 border border-slate-800 px-1 py-0.5 rounded text-slate-300">Ctrl+D</kbd>
+            <div
+              className="hidden sm:flex items-center ml-1 pl-2 border-l border-slate-700/70 text-[10px] text-slate-400 font-mono"
+              title="Shortcut to toggle views: Ctrl+D"
+            >
+              <kbd className="bg-slate-900 border border-slate-800 px-1 py-0.5 rounded text-slate-300">
+                Ctrl+D
+              </kbd>
             </div>
           </div>
 
@@ -365,7 +432,10 @@ export default function App() {
             className="flex items-center gap-2 px-3 py-1.5 bg-slate-800/80 hover:bg-slate-700/90 border border-slate-700 rounded-full transition-all group shadow-sm text-xs cursor-pointer"
             title="Open Progress & Mastery Visualization Chart"
           >
-            <Trophy size={15} className="text-yellow-400 group-hover:scale-110 transition-transform" />
+            <Trophy
+              size={15}
+              className="text-yellow-400 group-hover:scale-110 transition-transform"
+            />
             <span className="font-medium text-slate-300">
               {completedTasks.size} Tasks
             </span>
@@ -391,7 +461,8 @@ export default function App() {
                 Mastery & Learning Progress Overview
               </h2>
               <p className="text-xs text-slate-400 mt-1">
-                Visualizing completion rates, module achievements, and mastery percentages across algorithm domains.
+                Visualizing completion rates, module achievements, and mastery
+                percentages across algorithm domains.
               </p>
             </div>
 
@@ -406,7 +477,7 @@ export default function App() {
       )}
 
       {/* Main Content Area */}
-      {activeTab === 'learn' ? (
+      {activeTab === "learn" ? (
         <div className="flex flex-1 overflow-hidden">
           {/* Sidebar Modules List */}
           <aside className="w-80 border-r border-slate-800 bg-slate-900/30 flex flex-col overflow-y-auto shrink-0">
@@ -425,11 +496,14 @@ export default function App() {
               <div>
                 <div className="flex items-center justify-between mb-2">
                   <h2 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
-                    <Filter size={13} className="text-blue-400" /> Filter by Difficulty
+                    <Filter size={13} className="text-blue-400" /> Filter by
+                    Difficulty
                   </h2>
                 </div>
                 <div className="grid grid-cols-2 gap-1.5 p-1 bg-slate-950/80 border border-slate-800 rounded-lg">
-                  {(['All', 'Beginner', 'Intermediate', 'Advanced'] as const).map(diff => (
+                  {(
+                    ["All", "Beginner", "Intermediate", "Advanced"] as const
+                  ).map((diff) => (
                     <button
                       key={diff}
                       id={`filter-${diff.toLowerCase()}`}
@@ -453,7 +527,8 @@ export default function App() {
               {/* Modules & Tasks Navigation */}
               <div>
                 <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2.5 flex items-center gap-2">
-                  <BookOpen size={14} /> Curriculum ({filteredModules.length} Modules)
+                  <BookOpen size={14} /> Curriculum ({filteredModules.length}{" "}
+                  Modules)
                 </h3>
                 <div className="flex flex-col gap-2">
                   {filteredModules.length === 0 ? (
@@ -461,7 +536,7 @@ export default function App() {
                       No tasks found for "{difficultyFilter}" difficulty.
                     </div>
                   ) : (
-                    filteredModules.map(mod => (
+                    filteredModules.map((mod) => (
                       <div key={mod.id} className="flex flex-col">
                         <button
                           onClick={() => handleSelectModule(mod)}
@@ -472,7 +547,9 @@ export default function App() {
                               : "bg-transparent border-transparent text-slate-400 hover:bg-slate-800/40 hover:text-slate-200"
                           )}
                         >
-                          <span className="font-semibold text-xs leading-snug">{mod.title}</span>
+                          <span className="font-semibold text-xs leading-snug">
+                            {mod.title}
+                          </span>
                           <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 font-mono ml-1">
                             {mod.tasks.length}
                           </span>
@@ -480,7 +557,7 @@ export default function App() {
 
                         {activeModule.id === mod.id && (
                           <div className="ml-3 mt-1.5 flex flex-col gap-1 border-l-2 border-slate-800 pl-2.5">
-                            {mod.tasks.map(task => (
+                            {mod.tasks.map((task) => (
                               <button
                                 key={task.id}
                                 id={`task-${task.id}`}
@@ -493,12 +570,16 @@ export default function App() {
                                 )}
                               >
                                 <div className="flex flex-col min-w-0 pr-2">
-                                  <span className="truncate font-medium">{task.title}</span>
+                                  <span className="truncate font-medium">
+                                    {task.title}
+                                  </span>
                                   <div className="flex items-center gap-1.5 mt-0.5">
-                                    <span className={cn(
-                                      "text-[9px] px-1.5 py-0.2 rounded border font-semibold",
-                                      getDifficultyBadge(task.difficulty)
-                                    )}>
+                                    <span
+                                      className={cn(
+                                        "text-[9px] px-1.5 py-0.2 rounded border font-semibold",
+                                        getDifficultyBadge(task.difficulty)
+                                      )}
+                                    >
                                       {task.difficulty}
                                     </span>
                                     <span className="text-[9px] font-mono text-slate-500">
@@ -527,15 +608,20 @@ export default function App() {
             <div className="shrink-0 flex flex-wrap items-center justify-between gap-3 bg-slate-900/40 border border-slate-800/80 p-3.5 rounded-xl">
               <div>
                 <div className="flex flex-wrap items-center gap-2 mb-1">
-                  <h2 className="text-xl font-bold text-white">{activeTask.title}</h2>
-                  <span className={cn(
-                    "text-xs px-2.5 py-0.5 rounded-full border font-semibold",
-                    getDifficultyBadge(activeTask.difficulty)
-                  )}>
+                  <h2 className="text-xl font-bold text-white">
+                    {activeTask.title}
+                  </h2>
+                  <span
+                    className={cn(
+                      "text-xs px-2.5 py-0.5 rounded-full border font-semibold",
+                      getDifficultyBadge(activeTask.difficulty)
+                    )}
+                  >
                     {activeTask.difficulty}
                   </span>
                   <span className="text-xs px-2 py-0.5 rounded-md bg-purple-950/60 border border-purple-500/30 text-purple-300 font-mono font-medium flex items-center gap-1">
-                    <Gauge size={12} /> Target: {activeTask.optimalTimeComplexity}
+                    <Gauge size={12} /> Target:{" "}
+                    {activeTask.optimalTimeComplexity}
                   </span>
                   {completedTasks.has(activeTask.id) && (
                     <span className="flex items-center gap-1 text-xs bg-emerald-950 border border-emerald-500/30 text-emerald-400 px-2.5 py-0.5 rounded-full font-medium">
@@ -582,11 +668,14 @@ export default function App() {
             {/* Personal Notes Section */}
             <div className="shrink-0 pt-2 border-t border-slate-800/80">
               <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1.5 flex items-center gap-2">
-                <FileText size={14} className="text-blue-400" /> Personal Notes & Key Takeaways
+                <FileText size={14} className="text-blue-400" /> Personal Notes
+                & Key Takeaways
               </label>
               <textarea
-                value={notes[activeTask.id] || ''}
-                onChange={(e) => setNotes({ ...notes, [activeTask.id]: e.target.value })}
+                value={notes[activeTask.id] || ""}
+                onChange={(e) =>
+                  setNotes({ ...notes, [activeTask.id]: e.target.value })
+                }
                 placeholder="Jot down key takeaways, reminders, or insights for this task (auto-saved to your browser)..."
                 className="w-full h-16 bg-slate-900/60 border border-slate-800 rounded-lg p-2.5 text-xs font-mono text-slate-300 placeholder:text-slate-600 focus:outline-none focus:border-blue-500/50 resize-y transition-colors"
               />

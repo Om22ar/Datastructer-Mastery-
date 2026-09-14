@@ -420,53 +420,5 @@ export const glossaryData: GlossaryConcept[] = [
     taskId: "t7_8",
     moduleTitle: "Module 7: The Stack Data Structure",
     tags: ["stack", "STL", "container", "palindrome", "LIFO"]
-  },
-  {
-    id: "g36",
-    term: "2D Matrix Transposition",
-    category: "Arrays & Memory",
-    definition: "Transposition converts matrix rows into columns by setting `transpose[j][i] = matrix[i][j]`. For an N x N matrix, nested loops iterate over all N² elements.",
-    cppExample: "for (int i = 0; i < 4; ++i) {\n  for (int j = 0; j < 4; ++j) {\n    transpose[j][i] = x[i][j];\n  }\n}",
-    complexity: "O(n²) Time | O(n²) Space",
-    moduleId: "m5",
-    taskId: "t5_1",
-    moduleTitle: "Module 5: 2D Matrices & Grid Transformations",
-    tags: ["2D array", "matrix", "transpose", "nested loops", "grid"]
-  },
-  {
-    id: "g37",
-    term: "Generic Function Templates (C++)",
-    category: "OOP",
-    definition: "C++ Templates enable writing generic functions that operate seamlessly on different data types (e.g., int, double, string) without duplicating code.",
-    cppExample: "template <typename T>\nint search(T arr[], int size, T target) {\n  for (int i = 0; i < size; i++) {\n    if (arr[i] == target) return i;\n  }\n  return -1;\n}",
-    complexity: "O(n) Time | O(1) Space",
-    moduleId: "m3",
-    taskId: "t3_8",
-    moduleTitle: "Module 3: Searching Algorithms",
-    tags: ["templates", "generic programming", "typename", "type polymorphism"]
-  },
-  {
-    id: "g38",
-    term: "Overflow-Safe Midpoint Calculation",
-    category: "Algorithms",
-    definition: "Calculating binary search midpoint using `mid = left + (right - left) / 2` avoids potential integer overflow that can occur with `(left + right) / 2` when values approach `INT_MAX`.",
-    cppExample: "int left = 0, right = size - 1;\nwhile (left <= right) {\n  int mid = left + (right - left) / 2;\n  if (arr[mid] == target) return mid;\n  else if (arr[mid] < target) left = mid + 1;\n  else right = mid - 1;\n}",
-    complexity: "O(log n) Time | O(1) Space",
-    moduleId: "m3",
-    taskId: "t3_9",
-    moduleTitle: "Module 3: Searching Algorithms",
-    tags: ["binary search", "midpoint", "overflow guard", "recursion", "divide and conquer"]
-  },
-  {
-    id: "g39",
-    term: "Interactive Menu-Driven Data Structure",
-    category: "Stacks",
-    definition: "Combining a data structure with a console menu loop (e.g., `do-while` with `switch-case`) allowing users to interactively invoke operations like push, pop, peek, and display.",
-    cppExample: "switch (choice) {\n  case 1: cout << \"Enter val: \"; cin >> val; push(val); break;\n  case 2: pop(); break;\n  case 3: peek(); break;\n  case 4: display(); break;\n}",
-    complexity: "O(1) Per Operation",
-    moduleId: "m7",
-    taskId: "t7_10",
-    moduleTitle: "Module 7: The Stack Data Structure",
-    tags: ["menu", "switch-case", "interactive", "stack", "console"]
   }
 ];

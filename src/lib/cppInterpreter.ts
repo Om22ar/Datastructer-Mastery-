@@ -1,4 +1,4 @@
-import { SimulationFrame } from '../types';
+import { SimulationFrame } from "../types";
 
 export interface ExecutionResult {
   success: boolean;
@@ -10,27 +10,112 @@ export interface ExecutionResult {
   exitCode: number;
   submittedTimeComplexity?: string;
   optimalTimeComplexity?: string;
-  timeComplexityStatus?: 'optimal' | 'suboptimal' | 'unknown';
+  timeComplexityStatus?: "optimal" | "suboptimal" | "unknown";
   timeComplexityAnalysis?: string;
 }
 
 // Strip C++ comments to analyze clean code
 export function stripComments(code: string): string {
-  return code
-    .replace(/\/\*[\s\S]*?\*\//g, '')
-    .replace(/\/\/.*$/gm, '');
+  return code.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+}
+
+function parseNumberList(rawList: string): number[] {
+  return rawList
+    .split(",")
+    .map((part) => Number(part.trim()))
+    .filter((value) => Number.isFinite(value));
+}
+
+function parseArrayInitializer(
+  clean: string,
+  arrayName: string
+): number[] | null {
+  const arrayPattern = new RegExp(
+    String.raw`(?:int|long|short|float|double|auto)\s+${arrayName}\s*(?:\[[^\]]*\])?\s*=\s*\{([^}]*)\}`
+  );
+  const match = clean.match(arrayPattern);
+  if (!match) return null;
+  const values = parseNumberList(match[1]);
+  return values.length > 0 ? values : null;
+}
+
+function parseFirstArrayInitializer(
+  clean: string
+): { name: string; values: number[] } | null {
+  const match = clean.match(
+    /(?:int|long|short|float|double|auto)\s+([a-zA-Z_]\w*)\s*(?:\[[^\]]*\])?\s*=\s*\{([^}]*)\}/
+  );
+  if (!match) return null;
+  const values = parseNumberList(match[2]);
+  return values.length > 0 ? { name: match[1], values } : null;
+}
+
+function formatArrayOutput(label: string, values: number[]): string[] {
+  return values.map((val, idx) => `${label} ${idx + 1} = ${val}`);
+}
+
+function parseFirstNumericArray(clean: string, fallback: number[]): number[] {
+  return parseFirstArrayInitializer(clean)?.values ?? fallback;
+}
+
+function formatInlineArray(values: number[]): string {
+  return `[${values.join(", ")}]`;
+}
+
+function parseNumericArgument(
+  clean: string,
+  functionName: string,
+  fallback: number
+): number {
+  const match = clean.match(
+    new RegExp(`${functionName}\\s*\\([^,]+,\\s*(-?\\d+(?:\\.\\d+)?)\\s*\\)`)
+  );
+  return match ? Number(match[1]) : fallback;
+}
+
+function parseStringInitializer(clean: string, name: string): string | null {
+  const match = clean.match(
+    new RegExp(`(?:string|char\\s+\\w+\\[\\s*\\])\\s+${name}\\s*=\\s*"([^"]*)"`)
+  );
+  return match?.[1] ?? null;
+}
+
+function parseFirstQuotedValue(clean: string): string | null {
+  const match = clean.match(
+    /(?:string|char\s+\w+\s*\[\s*\d*\s*\])\s+\w+\s*=\s*"([^"]*)"/
+  );
+  return match?.[1] ?? null;
+}
+
+function evaluatePostfixExpression(expression: string): number | null {
+  const stack: number[] = [];
+  for (const symbol of expression.replace(/\s+/g, "")) {
+    if (/\d/.test(symbol)) {
+      stack.push(Number(symbol));
+      continue;
+    }
+    if (stack.length < 2 || !/[+\-*/%]/.test(symbol)) return null;
+    const right = stack.pop()!;
+    const left = stack.pop()!;
+    if (symbol === "+") stack.push(left + right);
+    else if (symbol === "-") stack.push(left - right);
+    else if (symbol === "*") stack.push(left * right);
+    else if (symbol === "/") stack.push(right === 0 ? NaN : left / right);
+    else stack.push(left % right);
+  }
+  return stack.length === 1 && Number.isFinite(stack[0]) ? stack[0] : null;
 }
 
 // Check for balanced braces/parentheses
 export function checkSyntaxBalance(cleanCode: string): string | null {
   const stack: string[] = [];
-  const map: Record<string, string> = { '}': '{', ')': '(', ']': '[' };
+  const map: Record<string, string> = { "}": "{", ")": "(", "]": "[" };
   let inString = false;
-  let quoteChar = '';
+  let quoteChar = "";
 
   for (let i = 0; i < cleanCode.length; i++) {
     const char = cleanCode[i];
-    if ((char === '"' || char === "'") && cleanCode[i - 1] !== '\\') {
+    if ((char === '"' || char === "'") && cleanCode[i - 1] !== "\\") {
       if (!inString) {
         inString = true;
         quoteChar = char;
@@ -41,9 +126,9 @@ export function checkSyntaxBalance(cleanCode: string): string | null {
     }
     if (inString) continue;
 
-    if (char === '{' || char === '(' || char === '[') {
+    if (char === "{" || char === "(" || char === "[") {
       stack.push(char);
-    } else if (char === '}' || char === ')' || char === ']') {
+    } else if (char === "}" || char === ")" || char === "]") {
       const top = stack.pop();
       if (top !== map[char]) {
         return `Syntax Error: Unmatched bracket or parenthesis '${char}' at character position ${i}.`;
@@ -52,7 +137,9 @@ export function checkSyntaxBalance(cleanCode: string): string | null {
   }
 
   if (stack.length > 0) {
-    return `Syntax Error: Unclosed bracket '${stack[stack.length - 1]}' detected.`;
+    return `Syntax Error: Unclosed bracket '${
+      stack[stack.length - 1]
+    }' detected.`;
   }
   return null;
 }
@@ -60,10 +147,13 @@ export function checkSyntaxBalance(cleanCode: string): string | null {
 /**
  * Big-O Time Complexity Analyzer
  */
-export function analyzeComplexity(clean: string, taskId: string): {
+export function analyzeComplexity(
+  clean: string,
+  taskId: string
+): {
   submittedTimeComplexity: string;
   optimalTimeComplexity: string;
-  timeComplexityStatus: 'optimal' | 'suboptimal' | 'unknown';
+  timeComplexityStatus: "optimal" | "suboptimal" | "unknown";
   timeComplexityAnalysis: string;
 } {
   // Count loops
@@ -72,228 +162,272 @@ export function analyzeComplexity(clean: string, taskId: string): {
   const totalLoops = forLoops + whileLoops;
 
   // Check halving pattern
-  const hasHalving = /mid\s*=\s*[^;]+2|l\s*=\s*mid\s*\+\s*1|r\s*=\s*mid\s*-\s*1|>>\s*1|\/=\s*2/i.test(clean);
+  const hasHalving =
+    /mid\s*=\s*[^;]+2|l\s*=\s*mid\s*\+\s*1|r\s*=\s*mid\s*-\s*1|>>\s*1|\/=\s*2/i.test(
+      clean
+    );
 
-  if (taskId === 't1_1') {
-    const optimal = 'O(1)';
+  if (taskId === "t1_1") {
+    const optimal = "O(1)";
     if (totalLoops === 0) {
       return {
-        submittedTimeComplexity: 'O(1)',
+        submittedTimeComplexity: "O(1)",
         optimalTimeComplexity: optimal,
-        timeComplexityStatus: 'optimal',
-        timeComplexityAnalysis: 'Direct array indexing uses base pointer arithmetic to access elements in constant time O(1).',
+        timeComplexityStatus: "optimal",
+        timeComplexityAnalysis:
+          "Direct array indexing uses base pointer arithmetic to access elements in constant time O(1).",
       };
     } else {
       return {
-        submittedTimeComplexity: totalLoops === 1 ? 'O(n)' : `O(n^${totalLoops})`,
+        submittedTimeComplexity:
+          totalLoops === 1 ? "O(n)" : `O(n^${totalLoops})`,
         optimalTimeComplexity: optimal,
-        timeComplexityStatus: 'suboptimal',
+        timeComplexityStatus: "suboptimal",
         timeComplexityAnalysis: `Your solution uses ${totalLoops} loop(s). Direct array indexing can be executed in O(1) constant time without loops.`,
       };
     }
   }
 
-  if (taskId === 't1_2' || taskId === 't1_3' || taskId === 't1_4' || taskId === 't1_5' || taskId === 't1_6' || taskId === 't1_7') {
-    const optimal = 'O(n)';
+  if (
+    taskId === "t1_2" ||
+    taskId === "t1_3" ||
+    taskId === "t1_4" ||
+    taskId === "t1_5"
+  ) {
+    const optimal = "O(n)";
     if (totalLoops === 1) {
       return {
-        submittedTimeComplexity: 'O(n)',
+        submittedTimeComplexity: "O(n)",
         optimalTimeComplexity: optimal,
-        timeComplexityStatus: 'optimal',
-        timeComplexityAnalysis: 'Single-pass traversal visits each array element once, running in optimal O(n) linear time.',
+        timeComplexityStatus: "optimal",
+        timeComplexityAnalysis:
+          "Single-pass traversal visits each array element once, running in optimal O(n) linear time.",
       };
     } else if (totalLoops > 1) {
       return {
         submittedTimeComplexity: `O(n^${totalLoops})`,
         optimalTimeComplexity: optimal,
-        timeComplexityStatus: 'suboptimal',
-        timeComplexityAnalysis: 'Multiple nested loops detected. Array operations only require a single O(n) pass.',
+        timeComplexityStatus: "suboptimal",
+        timeComplexityAnalysis:
+          "Multiple nested loops detected. Array operations only require a single O(n) pass.",
       };
     }
     return {
-      submittedTimeComplexity: 'O(1)',
+      submittedTimeComplexity: "O(1)",
       optimalTimeComplexity: optimal,
-      timeComplexityStatus: 'suboptimal',
-      timeComplexityAnalysis: 'No traversal loop detected. Array processing requires an O(n) loop over the elements.',
+      timeComplexityStatus: "suboptimal",
+      timeComplexityAnalysis:
+        "No traversal loop detected. Array processing requires an O(n) loop over the elements.",
     };
   }
 
-  if (taskId === 't3_1' || taskId === 't3_5' || taskId === 't3_6' || taskId === 't3_7' || taskId === 't3_8' || taskId === 't3_10') {
-    const optimal = 'O(n)';
+  if (taskId === "t3_1" || taskId === "t3_5") {
+    const optimal = "O(n)";
     return {
-      submittedTimeComplexity: totalLoops >= 1 ? 'O(n)' : 'O(1)',
+      submittedTimeComplexity: totalLoops >= 1 ? "O(n)" : "O(1)",
       optimalTimeComplexity: optimal,
-      timeComplexityStatus: totalLoops >= 1 ? 'optimal' : 'suboptimal',
-      timeComplexityAnalysis: 'Linear search scans each element sequentially, with a worst-case time complexity of O(n).',
+      timeComplexityStatus: totalLoops >= 1 ? "optimal" : "suboptimal",
+      timeComplexityAnalysis:
+        "Linear search scans each element sequentially, with a worst-case time complexity of O(n).",
     };
   }
 
-  if (taskId === 't3_2' || taskId === 't3_3' || taskId === 't3_4' || taskId === 't3_9') {
-    const optimal = 'O(log n)';
+  if (taskId === "t3_2" || taskId === "t3_3" || taskId === "t3_4") {
+    const optimal = "O(log n)";
     if (hasHalving && totalLoops >= 1) {
       return {
-        submittedTimeComplexity: 'O(log n)',
+        submittedTimeComplexity: "O(log n)",
         optimalTimeComplexity: optimal,
-        timeComplexityStatus: 'optimal',
-        timeComplexityAnalysis: 'Halving the search space on each comparison reduces the problem size by half repeatedly, achieving optimal logarithmic O(log n) time.',
+        timeComplexityStatus: "optimal",
+        timeComplexityAnalysis:
+          "Halving the search space on each comparison reduces the problem size by half repeatedly, achieving optimal logarithmic O(log n) time.",
       };
     } else if (totalLoops >= 1) {
       return {
-        submittedTimeComplexity: 'O(n)',
+        submittedTimeComplexity: "O(n)",
         optimalTimeComplexity: optimal,
-        timeComplexityStatus: 'suboptimal',
-        timeComplexityAnalysis: 'Linear scan detected instead of binary halving. Halve the range with mid calculation and pointer updates to reach O(log n).',
+        timeComplexityStatus: "suboptimal",
+        timeComplexityAnalysis:
+          "Linear scan detected instead of binary halving. Halve the range with mid calculation and pointer updates to reach O(log n).",
       };
     }
     return {
-      submittedTimeComplexity: 'O(1)',
+      submittedTimeComplexity: "O(1)",
       optimalTimeComplexity: optimal,
-      timeComplexityStatus: 'suboptimal',
-      timeComplexityAnalysis: 'Binary search requires a loop with range halving (l = mid + 1, r = mid - 1) to achieve O(log n).',
+      timeComplexityStatus: "suboptimal",
+      timeComplexityAnalysis:
+        "Binary search requires a loop with range halving (l = mid + 1, r = mid - 1) to achieve O(log n).",
     };
   }
 
-  if (taskId === 't5_1') {
-    const optimal = 'O(n²)';
+  if (taskId === "t2_1") {
+    const optimal = "O(n)";
     return {
-      submittedTimeComplexity: totalLoops >= 2 ? 'O(n²)' : totalLoops === 1 ? 'O(n)' : 'O(1)',
+      submittedTimeComplexity: totalLoops >= 1 ? "O(n)" : "O(1)",
       optimalTimeComplexity: optimal,
-      timeComplexityStatus: totalLoops >= 2 ? 'optimal' : 'suboptimal',
-      timeComplexityAnalysis: 'Transposing an n x n matrix inspects all n² cells via nested loops in O(n²) time.',
+      timeComplexityStatus: totalLoops >= 1 ? "optimal" : "suboptimal",
+      timeComplexityAnalysis:
+        "Applying in-place arithmetic transforms (addelement, subelement, square, multi) visits all n array elements in O(n) linear time.",
     };
   }
 
-  if (taskId === 't2_1') {
-    const optimal = 'O(n)';
+  if (taskId === "t2_2") {
+    const optimal = "O(n²)";
     return {
-      submittedTimeComplexity: totalLoops >= 1 ? 'O(n)' : 'O(1)',
+      submittedTimeComplexity:
+        totalLoops >= 2 ? "O(n²)" : totalLoops === 1 ? "O(n)" : "O(1)",
       optimalTimeComplexity: optimal,
-      timeComplexityStatus: totalLoops >= 1 ? 'optimal' : 'suboptimal',
-      timeComplexityAnalysis: 'Applying in-place arithmetic transforms (addelement, subelement, square, multi) visits all n array elements in O(n) linear time.',
+      timeComplexityStatus: totalLoops >= 2 ? "optimal" : "suboptimal",
+      timeComplexityAnalysis:
+        "Both Bubble Sort and Selection Sort use nested loops to compare and swap pairs, taking O(n²) time.",
     };
   }
 
-  if (taskId === 't2_2') {
-    const optimal = 'O(n²)';
+  if (taskId === "t2_3") {
+    const optimal = "O(n²)";
     return {
-      submittedTimeComplexity: totalLoops >= 2 ? 'O(n²)' : (totalLoops === 1 ? 'O(n)' : 'O(1)'),
+      submittedTimeComplexity:
+        totalLoops >= 2 ? "O(n²)" : totalLoops === 1 ? "O(n)" : "O(1)",
       optimalTimeComplexity: optimal,
-      timeComplexityStatus: totalLoops >= 2 ? 'optimal' : 'suboptimal',
-      timeComplexityAnalysis: 'Both Bubble Sort and Selection Sort use nested loops to compare and swap pairs, taking O(n²) time.',
+      timeComplexityStatus: totalLoops >= 2 ? "optimal" : "suboptimal",
+      timeComplexityAnalysis:
+        "Comprehensive array suite: Transforms take O(n), sorting takes O(n²), and binary search takes O(log n). Overall bound is dominated by O(n²).",
     };
   }
 
-  if (taskId === 't2_3') {
-    const optimal = 'O(n²)';
+  if (
+    taskId === "t7_1" ||
+    taskId === "t7_2" ||
+    taskId === "t7_3" ||
+    taskId === "t8_1" ||
+    taskId === "t9_1"
+  ) {
+    const optimal = "O(1)";
+    const desc = taskId.startsWith("t7")
+      ? "Array-based stack push/pop/peek only manipulate the stackTop pointer index directly in O(1) constant time."
+      : "Queue operations (enqueue/dequeue via front/rear pointers and modulo wrap-around) run directly in O(1) constant time.";
     return {
-      submittedTimeComplexity: totalLoops >= 2 ? 'O(n²)' : (totalLoops === 1 ? 'O(n)' : 'O(1)'),
+      submittedTimeComplexity: totalLoops === 0 ? "O(1)" : "O(n)",
       optimalTimeComplexity: optimal,
-      timeComplexityStatus: totalLoops >= 2 ? 'optimal' : 'suboptimal',
-      timeComplexityAnalysis: 'Comprehensive array suite: Transforms take O(n), sorting takes O(n²), and binary search takes O(log n). Overall bound is dominated by O(n²).',
-    };
-  }
-
-  if (taskId === 't7_1' || taskId === 't7_2' || taskId === 't7_3' || taskId === 't7_10' || taskId === 't8_1' || taskId === 't9_1') {
-    const optimal = 'O(1)';
-    const desc = taskId.startsWith('t7') 
-      ? 'Array-based stack push/pop/peek only manipulate the stackTop pointer index directly in O(1) constant time.'
-      : 'Queue operations (enqueue/dequeue via front/rear pointers and modulo wrap-around) run directly in O(1) constant time.';
-    return {
-      submittedTimeComplexity: totalLoops === 0 ? 'O(1)' : 'O(n)',
-      optimalTimeComplexity: optimal,
-      timeComplexityStatus: totalLoops === 0 ? 'optimal' : 'suboptimal',
+      timeComplexityStatus: totalLoops === 0 ? "optimal" : "suboptimal",
       timeComplexityAnalysis: desc,
     };
   }
 
-  if (taskId === 't8_2' || taskId === 't9_2' || taskId === 't9_3' || taskId === 't9_4' || taskId === 't9_5' || taskId === 't7_4' || taskId === 't7_5' || taskId === 't7_6' || taskId === 't7_7' || taskId === 't7_8' || taskId === 't7_9') {
-    const optimal = 'O(n)';
+  if (
+    taskId === "t8_2" ||
+    taskId === "t9_2" ||
+    taskId === "t9_3" ||
+    taskId === "t9_4" ||
+    taskId === "t9_5" ||
+    taskId === "t7_4" ||
+    taskId === "t7_5" ||
+    taskId === "t7_6" ||
+    taskId === "t7_7" ||
+    taskId === "t7_8" ||
+    taskId === "t7_9"
+  ) {
+    const optimal = "O(n)";
     return {
-      submittedTimeComplexity: totalLoops >= 1 ? 'O(n)' : 'O(1)',
+      submittedTimeComplexity: totalLoops >= 1 ? "O(n)" : "O(1)",
       optimalTimeComplexity: optimal,
-      timeComplexityStatus: totalLoops >= 1 ? 'optimal' : 'suboptimal',
-      timeComplexityAnalysis: taskId === 't9_2' || taskId === 't9_5'
-        ? 'Reversing a queue with a stack dequeues n elements and pops them back in 2n operations: O(n) linear time.'
-        : taskId === 't8_2'
-        ? 'Splitting a queue processes all n elements through a while-loop into q1 and q2 in O(n) linear time.'
-        : taskId === 't9_4'
-        ? 'Searching a circular queue via do-while loop traverses up to n elements in O(n) linear time.'
-        : taskId === 't7_4' || taskId === 't7_8'
-        ? 'Testing palindrome by pushing and popping string characters executes in O(n) linear time.'
-        : taskId === 't7_5'
-        ? 'Delimiter matching pushes and pops each parenthesis at most once in O(n) linear time.'
-        : taskId === 't7_6'
-        ? 'Reversing stack elements using a second auxiliary stack runs in O(n) linear time.'
-        : taskId === 't7_7'
-        ? 'Infix to prefix conversion scans and reverses tokens in O(n) linear time.'
-        : taskId === 't7_9'
-        ? 'Evaluating a postfix expression using an STL stack processes each character token in O(n) linear time.'
-        : 'Searching a circular queue traverses up to n elements via (i + 1) % size in O(n) linear time.',
+      timeComplexityStatus: totalLoops >= 1 ? "optimal" : "suboptimal",
+      timeComplexityAnalysis:
+        taskId === "t9_2" || taskId === "t9_5"
+          ? "Reversing a queue with a stack dequeues n elements and pops them back in 2n operations: O(n) linear time."
+          : taskId === "t8_2"
+          ? "Splitting a queue processes all n elements through a while-loop into q1 and q2 in O(n) linear time."
+          : taskId === "t9_4"
+          ? "Searching a circular queue via do-while loop traverses up to n elements in O(n) linear time."
+          : taskId === "t7_4" || taskId === "t7_8"
+          ? "Testing palindrome by pushing and popping string characters executes in O(n) linear time."
+          : taskId === "t7_5"
+          ? "Delimiter matching pushes and pops each parenthesis at most once in O(n) linear time."
+          : taskId === "t7_6"
+          ? "Reversing stack elements using a second auxiliary stack runs in O(n) linear time."
+          : taskId === "t7_7"
+          ? "Infix to prefix conversion scans and reverses tokens in O(n) linear time."
+          : taskId === "t7_9"
+          ? "Evaluating a postfix expression using an STL stack processes each character token in O(n) linear time."
+          : "Searching a circular queue traverses up to n elements via (i + 1) % size in O(n) linear time.",
     };
   }
 
-  if (taskId === 't6_1' || taskId === 't6_2' || taskId === 't6_4') {
-    const optimal = 'O(n)';
+  if (taskId === "t6_1" || taskId === "t6_2" || taskId === "t6_4") {
+    const optimal = "O(n)";
     return {
-      submittedTimeComplexity: totalLoops >= 1 ? 'O(n)' : 'O(1)',
+      submittedTimeComplexity: totalLoops >= 1 ? "O(n)" : "O(1)",
       optimalTimeComplexity: optimal,
-      timeComplexityStatus: totalLoops >= 1 ? 'optimal' : 'suboptimal',
-      timeComplexityAnalysis: taskId === 't6_1' || taskId === 't6_4'
-        ? 'Traversing the car object array for tabular printing, maximum model search, and linear search runs in O(n) linear time.'
-        : 'Filtering cars with model > 2000 and template array reversal both traverse n elements in O(n) linear time.',
+      timeComplexityStatus: totalLoops >= 1 ? "optimal" : "suboptimal",
+      timeComplexityAnalysis:
+        taskId === "t6_1" || taskId === "t6_4"
+          ? "Traversing the car object array for tabular printing, maximum model search, and linear search runs in O(n) linear time."
+          : "Filtering cars with model > 2000 and template array reversal both traverse n elements in O(n) linear time.",
     };
   }
 
-  if (taskId === 't6_3') {
-    const optimal = 'O(1)';
+  if (taskId === "t6_3") {
+    const optimal = "O(1)";
     return {
-      submittedTimeComplexity: 'O(1)',
+      submittedTimeComplexity: "O(1)",
       optimalTimeComplexity: optimal,
-      timeComplexityStatus: 'optimal',
-      timeComplexityAnalysis: 'Direct arithmetic calculations inside Calculator member functions execute in O(1) constant time.',
+      timeComplexityStatus: "optimal",
+      timeComplexityAnalysis:
+        "Direct arithmetic calculations inside Calculator member functions execute in O(1) constant time.",
     };
   }
 
-  if (taskId === 't10_1') {
-    const optimal = 'O(1)';
+  if (taskId === "t10_1") {
+    const optimal = "O(1)";
     return {
-      submittedTimeComplexity: 'O(1)',
+      submittedTimeComplexity: "O(1)",
       optimalTimeComplexity: optimal,
-      timeComplexityStatus: 'optimal',
-      timeComplexityAnalysis: 'Head and tail pointer manipulations execute in O(1) constant time, while predecessor traversal for arbitrary node deletion runs in O(n).',
+      timeComplexityStatus: "optimal",
+      timeComplexityAnalysis:
+        "Head and tail pointer manipulations execute in O(1) constant time, while predecessor traversal for arbitrary node deletion runs in O(n).",
     };
   }
 
-  if (taskId === 't10_2' || taskId === 't10_3' || taskId === 't10_5') {
-    const optimal = 'O(n)';
+  if (taskId === "t10_2" || taskId === "t10_3" || taskId === "t10_5") {
+    const optimal = "O(n)";
     return {
-      submittedTimeComplexity: totalLoops >= 1 ? 'O(n)' : 'O(1)',
+      submittedTimeComplexity: totalLoops >= 1 ? "O(n)" : "O(1)",
       optimalTimeComplexity: optimal,
-      timeComplexityStatus: totalLoops >= 1 ? 'optimal' : 'suboptimal',
-      timeComplexityAnalysis: taskId === 't10_2'
-        ? 'Traversing nodes for count, maximum value calculation, and zero filtering runs in O(n) linear time.'
-        : taskId === 't10_3'
-        ? 'Partitioning 15 nodes by parity into even and odd lists inspects each node once in O(n) linear time.'
-        : 'Pairwise summing two 5-node linked lists concurrently traverses n elements in O(n) linear time.',
+      timeComplexityStatus: totalLoops >= 1 ? "optimal" : "suboptimal",
+      timeComplexityAnalysis:
+        taskId === "t10_2"
+          ? "Traversing nodes for count, maximum value calculation, and zero filtering runs in O(n) linear time."
+          : taskId === "t10_3"
+          ? "Partitioning 15 nodes by parity into even and odd lists inspects each node once in O(n) linear time."
+          : "Pairwise summing two 5-node linked lists concurrently traverses n elements in O(n) linear time.",
     };
   }
 
-  if (taskId === 't10_4') {
-    const optimal = 'O(n²)';
+  if (taskId === "t10_4") {
+    const optimal = "O(n²)";
     return {
-      submittedTimeComplexity: totalLoops >= 2 ? 'O(n²)' : (totalLoops === 1 ? 'O(n)' : 'O(1)'),
+      submittedTimeComplexity:
+        totalLoops >= 2 ? "O(n²)" : totalLoops === 1 ? "O(n)" : "O(1)",
       optimalTimeComplexity: optimal,
-      timeComplexityStatus: totalLoops >= 2 ? 'optimal' : 'suboptimal',
-      timeComplexityAnalysis: 'In-place sorting of a singly linked list with nested loops performs n(n-1)/2 node comparisons: O(n²) time.',
+      timeComplexityStatus: totalLoops >= 2 ? "optimal" : "suboptimal",
+      timeComplexityAnalysis:
+        "In-place sorting of a singly linked list with nested loops performs n(n-1)/2 node comparisons: O(n²) time.",
     };
   }
 
   // Generic fallback
-  const subComplexity = totalLoops === 0 ? 'O(1)' : totalLoops === 1 ? (hasHalving ? 'O(log n)' : 'O(n)') : `O(n^${totalLoops})`;
+  const subComplexity =
+    totalLoops === 0
+      ? "O(1)"
+      : totalLoops === 1
+      ? hasHalving
+        ? "O(log n)"
+        : "O(n)"
+      : `O(n^${totalLoops})`;
   return {
     submittedTimeComplexity: subComplexity,
-    optimalTimeComplexity: 'O(1)',
-    timeComplexityStatus: 'unknown',
+    optimalTimeComplexity: "O(1)",
+    timeComplexityStatus: "unknown",
     timeComplexityAnalysis: `Estimated complexity based on loop depth (${totalLoops} loop(s)).`,
   };
 }
@@ -311,109 +445,133 @@ export function executeCppCode(code: string, taskId: string): ExecutionResult {
       frames: [{ description: "Compilation Failed", array: [] }],
       stdout: balanceError,
       exitCode: 1,
-      submittedTimeComplexity: 'N/A',
-      optimalTimeComplexity: 'N/A',
-      timeComplexityStatus: 'unknown',
-      timeComplexityAnalysis: 'Compilation failed due to bracket syntax errors.',
+      submittedTimeComplexity: "N/A",
+      optimalTimeComplexity: "N/A",
+      timeComplexityStatus: "unknown",
+      timeComplexityAnalysis:
+        "Compilation failed due to bracket syntax errors.",
     };
   }
 
   const complexity = analyzeComplexity(clean, taskId);
 
+  // These older task simulators contain demonstration values rather than a
+  // trustworthy interpreter. Never present those values as the user's output.
+  const unsupportedDemoTasks = new Set([
+    "t2_3",
+    "t6_1",
+    "t6_2",
+    "t6_3",
+    "t6_4",
+    "t7_1",
+    "t7_2",
+    "t7_3",
+    "t7_5",
+    "t7_6",
+    "t7_7",
+    "t8_1",
+    "t8_2",
+    "t9_1",
+    "t9_2",
+    "t9_3",
+    "t9_4",
+    "t9_5",
+    "t10_1",
+    "t10_2",
+    "t10_3",
+    "t10_4",
+    "t10_5",
+  ]);
+  if (unsupportedDemoTasks.has(taskId)) {
+    return {
+      success: false,
+      isTaskGoalAchieved: false,
+      goalFeedback:
+        "This task has no reliable runtime interpreter yet, so sample values are hidden instead of being reported as real results.",
+      frames: [],
+      stdout:
+        "No real output was produced. This C++ task requires a native compiler/runtime to execute arbitrary input.",
+      exitCode: 1,
+      ...complexity,
+    };
+  }
+
   let result: ExecutionResult;
-  if (taskId === 't1_1') {
+  if (taskId === "t1_1") {
     result = simulateArrayFundamentals(code, clean);
-  } else if (taskId === 't1_2') {
+  } else if (taskId === "t1_2") {
     result = simulateArrayTraversal(code, clean);
-  } else if (taskId === 't1_3') {
+  } else if (taskId === "t1_3") {
     result = simulatePrintArray(code, clean);
-  } else if (taskId === 't1_4') {
+  } else if (taskId === "t1_4") {
     result = simulateAddElement(code, clean);
-  } else if (taskId === 't1_5') {
+  } else if (taskId === "t1_5") {
     result = simulateMultiArray(code, clean);
-  } else if (taskId === 't1_6') {
-    result = simulateSquareElement(code, clean);
-  } else if (taskId === 't1_7') {
-    result = simulateSubElement(code, clean);
-  } else if (taskId === 't2_1') {
+  } else if (taskId === "t2_1") {
     result = simulateArrayTransformations(code, clean);
-  } else if (taskId === 't2_2') {
+  } else if (taskId === "t2_2") {
     result = simulateArraySorting(code, clean);
-  } else if (taskId === 't2_3') {
+  } else if (taskId === "t2_3") {
     result = simulateComprehensiveArrayLab(code, clean);
-  } else if (taskId === 't3_1') {
+  } else if (taskId === "t3_1") {
     result = simulateLinearSearch(code, clean);
-  } else if (taskId === 't3_2') {
+  } else if (taskId === "t3_2") {
     result = simulateBinarySearch(code, clean);
-  } else if (taskId === 't3_3') {
+  } else if (taskId === "t3_3") {
     result = simulateBinarySearchWithRange(code, clean);
-  } else if (taskId === 't3_4') {
+  } else if (taskId === "t3_4") {
     result = simulateBooleanBinarySearch(code, clean);
-  } else if (taskId === 't3_5') {
+  } else if (taskId === "t3_5") {
     result = simulatePositionSearch(code, clean);
-  } else if (taskId === 't3_6') {
-    result = simulateAllPosition(code, clean);
-  } else if (taskId === 't3_7') {
-    result = simulateSearchValue(code, clean);
-  } else if (taskId === 't3_8') {
-    result = simulateGenericSearch(code, clean);
-  } else if (taskId === 't3_9') {
-    result = simulateBinarySearchIterRec(code, clean);
-  } else if (taskId === 't3_10') {
-    result = simulateLinearSearchUnsorted(code, clean);
-  } else if (taskId === 't5_1') {
-    result = simulateMatrixTranspose(code, clean);
-  } else if (taskId === 't6_1') {
+  } else if (taskId === "t6_1") {
     result = simulateCarClass(code, clean);
-  } else if (taskId === 't6_2') {
+  } else if (taskId === "t6_2") {
     result = simulateCarAssignment(code, clean);
-  } else if (taskId === 't6_3') {
+  } else if (taskId === "t6_3") {
     result = simulateCalculatorClass(code, clean);
-  } else if (taskId === 't6_4') {
+  } else if (taskId === "t6_4") {
     result = simulateCarInventorySystem(code, clean);
-  } else if (taskId === 't7_1') {
+  } else if (taskId === "t7_1") {
     result = simulateStack(code, clean);
-  } else if (taskId === 't7_2') {
+  } else if (taskId === "t7_2") {
     result = simulateStackTop(code, clean);
-  } else if (taskId === 't7_3') {
+  } else if (taskId === "t7_3") {
     result = simulateStackFundamentals(code, clean);
-  } else if (taskId === 't7_4') {
+  } else if (taskId === "t7_4") {
     result = simulatePalindromeStack(code, clean);
-  } else if (taskId === 't7_5') {
+  } else if (taskId === "t7_5") {
     result = simulateDelimiterMatching(code, clean);
-  } else if (taskId === 't7_6') {
+  } else if (taskId === "t7_6") {
     result = simulateTwoStackReversal(code, clean);
-  } else if (taskId === 't7_7') {
+  } else if (taskId === "t7_7") {
     result = simulateInfixToPrefix(code, clean);
-  } else if (taskId === 't7_8') {
+  } else if (taskId === "t7_8") {
     result = simulateSTLStackPalindrome(code, clean);
-  } else if (taskId === 't7_9') {
+  } else if (taskId === "t7_9") {
     result = simulatePostfixEvaluation(code, clean);
-  } else if (taskId === 't7_10') {
-    result = simulateStackMenuOperations(code, clean);
-  } else if (taskId === 't8_1') {
+  } else if (taskId === "t8_1") {
     result = simulateQueuePushPop(code, clean);
-  } else if (taskId === 't8_2') {
+  } else if (taskId === "t8_2") {
     result = simulateSplitQueue(code, clean);
-  } else if (taskId === 't9_1') {
+  } else if (taskId === "t9_1") {
     result = simulateCircularQueue(code, clean);
-  } else if (taskId === 't9_2') {
+  } else if (taskId === "t9_2") {
     result = simulateReverseQueue(code, clean);
-  } else if (taskId === 't9_3') {
+  } else if (taskId === "t9_3") {
     result = simulateCircularQueueSearch(code, clean);
-  } else if (taskId === 't9_4') {
+  } else if (taskId === "t9_4") {
     result = simulateCircularQueueClass(code, clean);
-  } else if (taskId === 't9_5') {
+  } else if (taskId === "t9_5") {
     result = simulateQueueReversalSTL(code, clean);
-  } else if (taskId === 't10_1') {
+  } else if (taskId === "t10_1") {
     result = simulateSLLCore(code, clean);
-  } else if (taskId === 't10_2') {
+  } else if (taskId === "t10_2") {
     result = simulateSLLFilterAndStats(code, clean);
-  } else if (taskId === 't10_3') {
+  } else if (taskId === "t10_3") {
     result = simulateSLLSplitParity(code, clean);
-  } else if (taskId === 't10_4') {
+  } else if (taskId === "t10_4") {
     result = simulateSLLSort(code, clean);
-  } else if (taskId === 't10_5') {
+  } else if (taskId === "t10_5") {
     result = simulateSLLSumTwoLists(code, clean);
   } else {
     result = simulateGeneric(code, clean);
@@ -428,14 +586,20 @@ export function executeCppCode(code: string, taskId: string): ExecutionResult {
 /**
  * Module 1: Array Fundamentals & Memory Management (t1_1)
  */
-function simulateArrayFundamentals(rawCode: string, clean: string): ExecutionResult {
-  const declMatch = clean.match(/(?:(?:static\s+)?int)\s+([a-zA-Z_]\w*)\s*\[\s*(\d+)\s*\]/);
-  
+function simulateArrayFundamentals(
+  rawCode: string,
+  clean: string
+): ExecutionResult {
+  const declMatch = clean.match(
+    /(?:(?:static\s+)?int)\s+([a-zA-Z_]\w*)\s*\[\s*(\d+)\s*\]/
+  );
+
   if (!declMatch) {
     return {
       success: false,
       isTaskGoalAchieved: false,
-      syntaxError: "Missing array declaration! Please declare an integer array of size 5 (e.g. `int arr[5];`).",
+      syntaxError:
+        "Missing array declaration! Please declare an integer array of size 5 (e.g. `int arr[5];`).",
       frames: [{ description: "No array declared", array: [] }],
       stdout: "Error: No array declared in main()",
       exitCode: 1,
@@ -449,13 +613,21 @@ function simulateArrayFundamentals(rawCode: string, clean: string): ExecutionRes
   const stdoutLines: string[] = [];
 
   frames.push({
-    description: `Allocated contiguous memory for '${arrayName}' with ${arraySize} integer slots (Size: ${arraySize * 4} bytes).`,
+    description: `Allocated contiguous memory for '${arrayName}' with ${arraySize} integer slots (Size: ${
+      arraySize * 4
+    } bytes).`,
     array: [...memoryArray],
     highlightIndices: [],
-    variables: { [`sizeof(${arrayName})`]: `${arraySize * 4} bytes`, length: arraySize },
+    variables: {
+      [`sizeof(${arrayName})`]: `${arraySize * 4} bytes`,
+      length: arraySize,
+    },
   });
 
-  const assignRegex = new RegExp(`${arrayName}\\s*\\[\\s*(\\d+)\\s*\\]\\s*=\\s*([^;]+);`, 'g');
+  const assignRegex = new RegExp(
+    `${arrayName}\\s*\\[\\s*(\\d+)\\s*\\]\\s*=\\s*([^;]+);`,
+    "g"
+  );
   let match;
   const assignments: { index: number; value: number }[] = [];
 
@@ -475,7 +647,9 @@ function simulateArrayFundamentals(rawCode: string, clean: string): ExecutionRes
     if (assign.index >= 0 && assign.index < arraySize) {
       memoryArray[assign.index] = assign.value;
       frames.push({
-        description: `Executed: ${arrayName}[${assign.index}] = ${assign.value}; (Memory Offset: +${assign.index * 4} bytes)`,
+        description: `Executed: ${arrayName}[${assign.index}] = ${
+          assign.value
+        }; (Memory Offset: +${assign.index * 4} bytes)`,
         array: [...memoryArray],
         highlightIndices: [assign.index],
         variables: { [`${arrayName}[${assign.index}]`]: assign.value },
@@ -486,24 +660,31 @@ function simulateArrayFundamentals(rawCode: string, clean: string): ExecutionRes
         array: [...memoryArray],
         variables: { error: "IndexOutOfBounds" },
       });
-      stdoutLines.push(`[Runtime Warning]: Segmentation fault / Index ${assign.index} out of bounds!`);
+      stdoutLines.push(
+        `[Runtime Warning]: Segmentation fault / Index ${assign.index} out of bounds!`
+      );
     }
   }
 
   const coutMatches = clean.matchAll(/cout\s*<<\s*([^;]+);/g);
   for (const cMatch of coutMatches) {
-    const parts = cMatch[1].split('<<').map(p => p.trim());
-    let lineOutput = '';
+    const parts = cMatch[1].split("<<").map((p) => p.trim());
+    let lineOutput = "";
     for (const part of parts) {
-      if (part === 'endl' || part === '"\\n"') {
-        lineOutput += '\n';
+      if (part === "endl" || part === '"\\n"') {
+        lineOutput += "\n";
       } else if (part.startsWith('"') && part.endsWith('"')) {
         lineOutput += part.slice(1, -1);
       } else {
-        const arrAccess = part.match(new RegExp(`${arrayName}\\s*\\[\\s*(\\d+)\\s*\\]`));
+        const arrAccess = part.match(
+          new RegExp(`${arrayName}\\s*\\[\\s*(\\d+)\\s*\\]`)
+        );
         if (arrAccess) {
           const idx = parseInt(arrAccess[1], 10);
-          lineOutput += memoryArray[idx] !== null ? String(memoryArray[idx]) : '0 (uninitialized garbage)';
+          lineOutput +=
+            memoryArray[idx] !== null
+              ? String(memoryArray[idx])
+              : "0 (uninitialized garbage)";
         } else {
           lineOutput += part;
         }
@@ -529,14 +710,19 @@ function simulateArrayFundamentals(rawCode: string, clean: string): ExecutionRes
   const isGoal = arraySize === 5 && memoryArray[0] === 10;
   let goalFeedback = "";
   if (isGoal) {
-    goalFeedback = "Task goal achieved! Integer array of size 5 created and arr[0] initialized to 10.";
+    goalFeedback =
+      "Task goal achieved! Integer array of size 5 created and arr[0] initialized to 10.";
   } else {
     goalFeedback = `Code executed successfully with your custom values! Memory array updated.\n(Goal Note: To pass the specific exercise challenge, declare arr[5] and set arr[0] = 10).`;
   }
 
-  const fullStdout = stdoutLines.length > 0 
-    ? stdoutLines.join('\n') + `\n\nProcess returned ${exitCode} (0x${exitCode.toString(16).toUpperCase()})`
-    : `[No stdout produced]\nProcess returned ${exitCode}`;
+  const fullStdout =
+    stdoutLines.length > 0
+      ? stdoutLines.join("\n") +
+        `\n\nProcess returned ${exitCode} (0x${exitCode
+          .toString(16)
+          .toUpperCase()})`
+      : `[No stdout produced]\nProcess returned ${exitCode}`;
 
   return {
     success: true,
@@ -551,15 +737,18 @@ function simulateArrayFundamentals(rawCode: string, clean: string): ExecutionRes
 /**
  * Task t1_2: Array Traversal & Accumulation
  */
-function simulateArrayTraversal(rawCode: string, clean: string): ExecutionResult {
-  const arr = [2, 4, 6, 8, 10];
+function simulateArrayTraversal(
+  rawCode: string,
+  clean: string
+): ExecutionResult {
+  const arr = parseFirstNumericArray(clean, [2, 4, 6, 8, 10]);
   const frames: SimulationFrame[] = [];
   let sum = 0;
 
   const hasSumInLoop = /sum\s*(\+=|=.*?\+)\s*arr\s*\[\s*i\s*\]/.test(clean);
 
   frames.push({
-    description: "Array initialized with 5 elements. sum initialized to 0.",
+    description: `Array initialized with ${arr.length} elements. sum initialized to 0.`,
     array: [...arr],
     variables: { sum: 0 },
   });
@@ -569,7 +758,11 @@ function simulateArrayTraversal(rawCode: string, clean: string): ExecutionResult
       sum += arr[i];
     }
     frames.push({
-      description: `Step ${i + 1}: Loop at index i = ${i}. Visiting arr[${i}] = ${arr[i]}. Accumulator sum = ${sum}.`,
+      description: `Step ${
+        i + 1
+      }: Loop at index i = ${i}. Visiting arr[${i}] = ${
+        arr[i]
+      }. Accumulator sum = ${sum}.`,
       array: [...arr],
       pointers: { i },
       highlightIndices: [i],
@@ -595,52 +788,83 @@ function simulateArrayTraversal(rawCode: string, clean: string): ExecutionResult
 /**
  * Module 2: Array Operations & Sorting Algorithms Lab (t2_1)
  */
-function simulateArrayTransformations(rawCode: string, clean: string): ExecutionResult {
-  const hasAdd = /arra\[i\]\s*\+=\s*ele|arra\[i\]\s*=\s*arra\[i\]\s*\+\s*ele/.test(clean);
-  const hasSub = /arra\[i\]\s*-=\s*ele|arra\[i\]\s*=\s*arra\[i\]\s*-\s*ele/.test(clean);
-  const hasSquare = /arra\[i\]\s*\*=\s*arra\[i\]|arra\[i\]\s*=\s*arra\[i\]\s*\*\s*arra\[i\]/.test(clean);
-  const hasMulti = /arra\[i\]\s*\*=\s*2|arra\[i\]\s*=\s*arra\[i\]\s*\*\s*2/.test(clean);
+function simulateArrayTransformations(
+  rawCode: string,
+  clean: string
+): ExecutionResult {
+  const hasAdd =
+    /arra\[i\]\s*\+=\s*ele|arra\[i\]\s*=\s*arra\[i\]\s*\+\s*ele/.test(clean);
+  const hasSub =
+    /arra\[i\]\s*-=\s*ele|arra\[i\]\s*=\s*arra\[i\]\s*-\s*ele/.test(clean);
+  const hasSquare =
+    /arra\[i\]\s*\*=\s*arra\[i\]|arra\[i\]\s*=\s*arra\[i\]\s*\*\s*arra\[i\]/.test(
+      clean
+    );
+  const multiMatch = clean.match(
+    /arra\[i\]\s*(?:\*=\s*|=\s*arra\[i\]\s*\*\s*)(-?\d+(?:\.\d+)?)/
+  );
+  const multiplier = multiMatch ? Number(multiMatch[1]) : 2;
+  const initial = parseFirstNumericArray(clean, [1, 2, 3, 4, 5]);
+  const addValue = parseNumericArgument(clean, "addelement", 3);
+  const subValue = parseNumericArgument(clean, "subelement", 1);
+  const added = initial.map((value) => value + addValue);
+  const subtracted = added.map((value) => value - subValue);
+  const squared = subtracted.map((value) => value * value);
+  const multiplied = squared.map((value) => value * multiplier);
+  const hasMulti = multiMatch !== null;
 
   const frames: SimulationFrame[] = [
     {
-      description: "Initial Array: [1, 2, 3, 4, 5]",
-      array: [1, 2, 3, 4, 5],
-      variables: { size: 5, state: "Initial elements" }
+      description: `Initial Array: ${formatInlineArray(initial)}`,
+      array: [...initial],
+      variables: { size: 5, state: "Initial elements" },
     },
     {
-      description: "addelement(arra, 3): Every element increased by 3 -> [4, 5, 6, 7, 8]",
-      array: [4, 5, 6, 7, 8],
+      description: `addelement(arra, ${addValue}): Every element increased -> ${formatInlineArray(
+        added
+      )}`,
+      array: [...added],
       highlightIndices: [0, 1, 2, 3, 4],
-      variables: { operation: "+= 3", state: "After addition" }
+      variables: { operation: `+= ${addValue}`, state: "After addition" },
     },
     {
-      description: "subelement(arra, 1): Every element decreased by 1 -> [3, 4, 5, 6, 7]",
-      array: [3, 4, 5, 6, 7],
+      description: `subelement(arra, ${subValue}): Every element decreased -> ${formatInlineArray(
+        subtracted
+      )}`,
+      array: [...subtracted],
       highlightIndices: [0, 1, 2, 3, 4],
-      variables: { operation: "-= 1", state: "After subtraction" }
+      variables: { operation: `-= ${subValue}`, state: "After subtraction" },
     },
     {
-      description: "squareelement(arra): Every element squared (x*x) -> [9, 16, 25, 36, 49]",
-      array: [9, 16, 25, 36, 49],
+      description: `squareelement(arra): Every element squared -> ${formatInlineArray(
+        squared
+      )}`,
+      array: [...squared],
       highlightIndices: [0, 1, 2, 3, 4],
-      variables: { operation: "arra[i] *= arra[i]", state: "After squaring" }
+      variables: { operation: "arra[i] *= arra[i]", state: "After squaring" },
     },
     {
-      description: "multiarray(arra): Every element doubled -> [18, 32, 50, 72, 98]",
-      array: [18, 32, 50, 72, 98],
+      description: `multiarray(arra): Every element multiplied by ${multiplier} -> ${formatInlineArray(
+        multiplied
+      )}`,
+      array: [...multiplied],
       highlightIndices: [0, 1, 2, 3, 4],
-      variables: { operation: "arra[i] *= 2", state: "After multiplication" }
-    }
+      variables: {
+        operation: `arra[i] *= ${multiplier}`,
+        state: "After multiplication",
+      },
+    },
   ];
 
   const isGoal = hasAdd && hasSub && hasSquare && hasMulti;
 
-  const stdout = `Initial array:\n` +
-    `the element 1 = 1\nthe element 2 = 2\nthe element 3 = 3\nthe element 4 = 4\nthe element 5 = 5\n\n` +
-    `Add 3 to elements:\nthe element 1 = 4\nthe element 2 = 5\nthe element 3 = 6\nthe element 4 = 7\nthe element 5 = 8\n\n` +
-    `Subtract 1 from elements:\nthe element 1 = 3\nthe element 2 = 4\nthe element 3 = 5\nthe element 4 = 6\nthe element 5 = 7\n\n` +
-    `Square elements:\nthe element 1 = 9\nthe element 2 = 16\nthe element 3 = 25\nthe element 4 = 36\nthe element 5 = 49\n\n` +
-    `Multiply elements by 2:\nthe element 1 = 18\nthe element 2 = 32\nthe element 3 = 50\nthe element 4 = 72\nthe element 5 = 98\n\n` +
+  const stdout =
+    `Initial array:\n` +
+    `Initial array: ${formatInlineArray(initial)}\n\n` +
+    `After adding ${addValue}: ${formatInlineArray(added)}\n\n` +
+    `After subtracting ${subValue}: ${formatInlineArray(subtracted)}\n\n` +
+    `After squaring: ${formatInlineArray(squared)}\n\n` +
+    `After multiplying by ${multiplier}: ${formatInlineArray(multiplied)}\n\n` +
     `Process returned 0 (0x0)`;
 
   return {
@@ -659,51 +883,69 @@ function simulateArrayTransformations(rawCode: string, clean: string): Execution
  * Module 2: Array Operations & Sorting Algorithms Lab (t2_2)
  */
 function simulateArraySorting(rawCode: string, clean: string): ExecutionResult {
-  const hasBubbleSwap = /temp\s*=\s*arra\[i\];\s*arra\[i\]\s*=\s*arra\[j\];\s*arra\[j\]\s*=\s*temp;/.test(clean);
-  const hasSelectSwap = /temp\s*=\s*arra\[i\];\s*arra\[i\]\s*=\s*arra\[index\];\s*arra\[index\]\s*=\s*temp;/.test(clean);
+  const hasBubbleSwap =
+    /temp\s*=\s*arra\[i\];\s*arra\[i\]\s*=\s*arra\[j\];\s*arra\[j\]\s*=\s*temp;/.test(
+      clean
+    );
+  const hasSelectSwap =
+    /temp\s*=\s*arra\[i\];\s*arra\[i\]\s*=\s*arra\[index\];\s*arra\[index\]\s*=\s*temp;/.test(
+      clean
+    );
   const hasBubble = /bubblesort/.test(clean);
   const hasSelect = /selectionsort/.test(clean);
 
+  const original = parseFirstNumericArray(clean, [64, 25, 12, 22, 11]);
+  const sorted = [...original].sort((a, b) => a - b);
   const frames: SimulationFrame[] = [
     {
-      description: "Original Unsorted Array: [64, 25, 12, 22, 11]",
-      array: [64, 25, 12, 22, 11],
-      variables: { status: "Unsorted" }
+      description: `Original Unsorted Array: ${formatInlineArray(original)}`,
+      array: [...original],
+      variables: { status: "Unsorted" },
     },
     {
-      description: "Pass 1: Minimum element 11 placed at index 0 -> [11, 64, 25, 22, 12]",
-      array: [11, 64, 25, 22, 12],
+      description:
+        "Pass 1: Minimum element 11 placed at index 0 -> [11, 64, 25, 22, 12]",
+      array: [...sorted],
       pointers: { sorted: 0 },
       highlightIndices: [0],
-      variables: { minFound: 11, sortedIndex: 0 }
+      variables: { minFound: 11, sortedIndex: 0 },
     },
     {
-      description: "Pass 2: Next minimum 12 placed at index 1 -> [11, 12, 64, 25, 22]",
-      array: [11, 12, 64, 25, 22],
+      description:
+        "Pass 2: Next minimum 12 placed at index 1 -> [11, 12, 64, 25, 22]",
+      array: [...sorted],
       pointers: { sorted: 1 },
       highlightIndices: [1],
-      variables: { minFound: 12, sortedIndex: 1 }
+      variables: { minFound: 12, sortedIndex: 1 },
     },
     {
-      description: "Pass 3: Next minimum 22 placed at index 2 -> [11, 12, 22, 64, 25]",
-      array: [11, 12, 22, 64, 25],
+      description:
+        "Pass 3: Next minimum 22 placed at index 2 -> [11, 12, 22, 64, 25]",
+      array: [...sorted],
       pointers: { sorted: 2 },
       highlightIndices: [2],
-      variables: { minFound: 22, sortedIndex: 2 }
+      variables: { minFound: 22, sortedIndex: 2 },
     },
     {
-      description: "Final Result: Array sorted in ascending order: [11, 12, 22, 25, 64]",
-      array: [11, 12, 22, 25, 64],
+      description: `Final Result: Array sorted in ascending order: ${formatInlineArray(
+        sorted
+      )}`,
+      array: [...sorted],
       highlightIndices: [0, 1, 2, 3, 4],
-      variables: { status: "Sorted Ascending" }
-    }
+      variables: { status: "Sorted Ascending" },
+    },
   ];
 
-  const isGoal = hasBubble && hasSelect && (hasBubbleSwap || clean.includes("temp")) && (hasSelectSwap || clean.includes("index"));
+  const isGoal =
+    hasBubble &&
+    hasSelect &&
+    (hasBubbleSwap || clean.includes("temp")) &&
+    (hasSelectSwap || clean.includes("index"));
 
-  const stdout = `Original Array: [ 64 , 25 , 12 , 22 , 11 ]\n` +
-    `After Bubble Sort: [ 11 , 12 , 22 , 25 , 64 ]\n` +
-    `After Selection Sort: [ 11 , 12 , 22 , 25 , 64 ]\n\n` +
+  const stdout =
+    `Original Array: ${formatInlineArray(original)}\n` +
+    `After Bubble Sort: ${formatInlineArray(sorted)}\n` +
+    `After Selection Sort: ${formatInlineArray(sorted)}\n\n` +
     `Process returned 0 (0x0)`;
 
   return {
@@ -721,7 +963,10 @@ function simulateArraySorting(rawCode: string, clean: string): ExecutionResult {
 /**
  * Module 2: Array Operations & Sorting Algorithms Lab (t2_3 - Comprehensive arra.cpp)
  */
-function simulateComprehensiveArrayLab(rawCode: string, clean: string): ExecutionResult {
+function simulateComprehensiveArrayLab(
+  rawCode: string,
+  clean: string
+): ExecutionResult {
   const hasAdd = /addelement/.test(clean);
   const hasSub = /subelement/.test(clean);
   const hasSquare = /squareelement/.test(clean);
@@ -737,57 +982,71 @@ function simulateComprehensiveArrayLab(rawCode: string, clean: string): Executio
     {
       description: "Array Input & Initialization: [1, 2, 3, 4, 5]",
       array: [1, 2, 3, 4, 5],
-      variables: { size: 5, state: "Initial elements" }
+      variables: { size: 5, state: "Initial elements" },
     },
     {
       description: "addelement(arra, 3): Elements become [4, 5, 6, 7, 8]",
       array: [4, 5, 6, 7, 8],
       highlightIndices: [0, 1, 2, 3, 4],
-      variables: { operation: "+= 3" }
+      variables: { operation: "+= 3" },
     },
     {
       description: "subelement(arra, 1): Elements become [3, 4, 5, 6, 7]",
       array: [3, 4, 5, 6, 7],
       highlightIndices: [0, 1, 2, 3, 4],
-      variables: { operation: "-= 1" }
+      variables: { operation: "-= 1" },
     },
     {
-      description: "squareelement(arra): Elements squared -> [9, 16, 25, 36, 49]",
+      description:
+        "squareelement(arra): Elements squared -> [9, 16, 25, 36, 49]",
       array: [9, 16, 25, 36, 49],
       highlightIndices: [0, 1, 2, 3, 4],
-      variables: { operation: "arra[i] * arra[i]" }
+      variables: { operation: "arra[i] * arra[i]" },
     },
     {
       description: "multiarray(arra): Elements doubled -> [18, 32, 50, 72, 98]",
       array: [18, 32, 50, 72, 98],
       highlightIndices: [0, 1, 2, 3, 4],
-      variables: { operation: "*= 2" }
+      variables: { operation: "*= 2" },
     },
     {
-      description: "simplesearch(arra, 50) & positionsearch(arra, 50): Found at index 2 (x = true)",
+      description:
+        "simplesearch(arra, 50) & positionsearch(arra, 50): Found at index 2 (x = true)",
       array: [18, 32, 50, 72, 98],
       pointers: { targetIndex: 2 },
       highlightIndices: [2],
-      variables: { target: 50, position: 2, found: "true" }
+      variables: { target: 50, position: 2, found: "true" },
     },
     {
-      description: "bubblesort / selectionsort: Array verified in ascending sorted order [18, 32, 50, 72, 98]",
+      description:
+        "bubblesort / selectionsort: Array verified in ascending sorted order [18, 32, 50, 72, 98]",
       array: [18, 32, 50, 72, 98],
       highlightIndices: [0, 1, 2, 3, 4],
-      variables: { sorted: "true" }
+      variables: { sorted: "true" },
     },
     {
-      description: "binarysearch(arra, 72): l=0, r=4, mid=2 (50 < 72 -> l=3). mid=3 (72 == 72 -> return 3)!",
+      description:
+        "binarysearch(arra, 72): l=0, r=4, mid=2 (50 < 72 -> l=3). mid=3 (72 == 72 -> return 3)!",
       array: [18, 32, 50, 72, 98],
       pointers: { l: 3, r: 4, mid: 3 },
       highlightIndices: [3],
-      variables: { target: 72, returnIndex: 3 }
-    }
+      variables: { target: 72, returnIndex: 3 },
+    },
   ];
 
-  const isGoal = hasAdd && hasSub && hasSquare && hasMulti && hasSimpleSearch && hasPosSearch && hasAllPos && (hasBubble || hasSelect) && hasBinary;
+  const isGoal =
+    hasAdd &&
+    hasSub &&
+    hasSquare &&
+    hasMulti &&
+    hasSimpleSearch &&
+    hasPosSearch &&
+    hasAllPos &&
+    (hasBubble || hasSelect) &&
+    hasBinary;
 
-  const stdout = `print the elements of array\n ` +
+  const stdout =
+    `print the elements of array\n ` +
     `the element 1 = 1\nthe element 2 = 2\nthe element 3 = 3\nthe element 4 = 4\nthe element 5 = 5\n` +
     `please add number 3 to the elements of array\n` +
     `print the elements of array after the operation\n` +
@@ -825,12 +1084,20 @@ function simulateComprehensiveArrayLab(rawCode: string, clean: string): Executio
  * Task t3_1: Linear Search
  */
 function simulateLinearSearch(rawCode: string, clean: string): ExecutionResult {
-  const arr = [15, 8, 42, 4, 16];
-  const target = 42;
+  const arr = parseFirstArrayInitializer(clean)?.values ?? [15, 8, 42, 4, 16];
+  const targetMatch = clean.match(
+    /linearSearch\s*\(\s*arr\s*,\s*\d+\s*,\s*(-?\d+)\s*\)|\btarget\s*=\s*(-?\d+)/
+  );
+  const target = targetMatch
+    ? parseInt(targetMatch[1] || targetMatch[2], 10)
+    : 42;
   const frames: SimulationFrame[] = [];
   let foundIdx = -1;
 
-  const hasReturnI = /if\s*\([^)]*arr\[i\]\s*==\s*target[^)]*\)\s*(?:\{\s*)?return\s+i\s*;/.test(clean);
+  const hasReturnI =
+    /if\s*\([^)]*arr\[i\]\s*==\s*target[^)]*\)\s*(?:\{\s*)?return\s+i\s*;/.test(
+      clean
+    );
 
   frames.push({
     description: `Linear Search: Looking for target ${target} sequentially in array of 5 elements.`,
@@ -841,7 +1108,9 @@ function simulateLinearSearch(rawCode: string, clean: string): ExecutionResult {
   for (let i = 0; i < arr.length; i++) {
     const isTarget = arr[i] === target;
     frames.push({
-      description: `Index [${i}]: arr[${i}] = ${arr[i]}. ${isTarget ? 'Match found!' : 'Does not match target.'}`,
+      description: `Index [${i}]: arr[${i}] = ${arr[i]}. ${
+        isTarget ? "Match found!" : "Does not match target."
+      }`,
       array: [...arr],
       pointers: { i },
       highlightIndices: [i],
@@ -854,7 +1123,9 @@ function simulateLinearSearch(rawCode: string, clean: string): ExecutionResult {
   }
 
   const isGoal = hasReturnI;
-  const stdout = `Result index: ${hasReturnI ? foundIdx : -1}\n\nProcess returned 0 (0x0)`;
+  const stdout = `Result index: ${
+    hasReturnI ? foundIdx : -1
+  }\n\nProcess returned 0 (0x0)`;
 
   return {
     success: true,
@@ -875,7 +1146,10 @@ function simulateBinarySearch(rawCode: string, clean: string): ExecutionResult {
   let arr: number[] = [1, 3, 5, 7, 9, 11, 13, 15, 17, 19];
   const arrMatch = clean.match(/int\s+arr(?:\[\d*\])?\s*=\s*\{([^}]+)\}/);
   if (arrMatch) {
-    arr = arrMatch[1].split(',').map(n => parseInt(n.trim(), 10)).filter(n => !isNaN(n));
+    arr = arrMatch[1]
+      .split(",")
+      .map((n) => parseInt(n.trim(), 10))
+      .filter((n) => !isNaN(n));
   }
 
   let target = 7;
@@ -892,7 +1166,8 @@ function simulateBinarySearch(rawCode: string, clean: string): ExecutionResult {
     return {
       success: false,
       isTaskGoalAchieved: false,
-      syntaxError: "Missing mid calculation: Inside the while loop, calculate `mid = l + (r - l) / 2;` or `mid = (l + r) / 2;`.",
+      syntaxError:
+        "Missing mid calculation: Inside the while loop, calculate `mid = l + (r - l) / 2;` or `mid = (l + r) / 2;`.",
       frames: [{ description: "Error in binarysearch()", array: arr }],
       stdout: "Error: `mid` was not computed in binarysearch()",
       exitCode: 1,
@@ -983,46 +1258,60 @@ function simulateCarClass(rawCode: string, clean: string): ExecutionResult {
   const hasPrice = /float\s+price\s*;/.test(clean);
   const hasMotor = /string\s+motor_size\s*;/.test(clean);
   const hasSearch = /search\s*\(\s*string\s+n\s*\)/.test(clean);
-  const hasSearchReturn = /return\s*\(?\s*name\s*==\s*n\s*\)?\s*;|return\s+(true|1)/.test(clean);
+  const hasSearchReturn =
+    /return\s*\(?\s*name\s*==\s*n\s*\)?\s*;|return\s+(true|1)/.test(clean);
   const hasNameThree = /name_three\s*\(\s*\)/.test(clean);
   const hasStrlen = /strlen\s*\(\s*name\s*\)\s*>\s*3/.test(clean);
 
   const frames: SimulationFrame[] = [
     {
-      description: "Class `car` defined with contiguous attributes: name[20], model, price, motor_size. 3 instances allocated.",
+      description:
+        "Class `car` defined with contiguous attributes: name[20], model, price, motor_size. 3 instances allocated.",
       array: ["Corolla (2018)", "BMW (2022)", "Camry (2020)"],
       variables: {
         size: 3,
         "c[0]": "Corolla, 2018, $15000, 4v",
         "c[1]": "BMW, 2022, $45000, 6v",
-        "c[2]": "Camry, 2020, $22000, 4v"
-      }
+        "c[2]": "Camry, 2020, $22000, 4v",
+      },
     },
     {
-      description: "Finding most modern car: Comparing models [2018, 2022, 2020]. Maximum model is 2022 at index 1 (BMW).",
+      description:
+        "Finding most modern car: Comparing models [2018, 2022, 2020]. Maximum model is 2022 at index 1 (BMW).",
       array: ["Corolla (2018)", "BMW (2022)", "Camry (2020)"],
       pointers: { modernCar: 1 },
       highlightIndices: [1],
-      variables: { mostModern: "BMW", modelYear: 2022, index: 1 }
+      variables: { mostModern: "BMW", modelYear: 2022, index: 1 },
     },
     {
-      description: "Linear Search: Searching for car name 'BMW'. Compared index 0 ('Corolla' != 'BMW'), matched at index 1 ('BMW' == 'BMW')!",
+      description:
+        "Linear Search: Searching for car name 'BMW'. Compared index 0 ('Corolla' != 'BMW'), matched at index 1 ('BMW' == 'BMW')!",
       array: ["Corolla (2018)", "BMW (2022)", "Camry (2020)"],
       pointers: { matchIndex: 1 },
       highlightIndices: [1],
-      variables: { searchTarget: "BMW", status: "Found at index [1]" }
+      variables: { searchTarget: "BMW", status: "Found at index [1]" },
     },
     {
-      description: "Name Length Filter: Checking strlen(name) > 3. 'Corolla' (7 > 3: Print), 'BMW' (3 > 3: No, Skip), 'Camry' (5 > 3: Print).",
+      description:
+        "Name Length Filter: Checking strlen(name) > 3. 'Corolla' (7 > 3: Print), 'BMW' (3 > 3: No, Skip), 'Camry' (5 > 3: Print).",
       array: ["Corolla (7 chars)", "BMW (3 chars)", "Camry (5 chars)"],
       highlightIndices: [0, 2],
-      variables: { "Corolla (7)": "Displayed", "BMW (3)": "Excluded", "Camry (5)": "Displayed" }
-    }
+      variables: {
+        "Corolla (7)": "Displayed",
+        "BMW (3)": "Excluded",
+        "Camry (5)": "Displayed",
+      },
+    },
   ];
 
-  const isGoal = hasSearch && (hasSearchReturn || clean.includes("==")) && (hasNameThree && hasStrlen);
+  const isGoal =
+    hasSearch &&
+    (hasSearchReturn || clean.includes("==")) &&
+    hasNameThree &&
+    hasStrlen;
 
-  const stdout = `information about the car in records\n\n` +
+  const stdout =
+    `information about the car in records\n\n` +
     `name      model     price     motor     \n\n` +
     `Corolla   2018      15000     4v        \n` +
     `BMW       2022      45000     6v        \n` +
@@ -1052,50 +1341,71 @@ function simulateCarClass(rawCode: string, clean: string): ExecutionResult {
 /**
  * Module 6: OOP & Object Arrays — Lab 1 Assignment (t6_2)
  */
-function simulateCarAssignment(rawCode: string, clean: string): ExecutionResult {
+function simulateCarAssignment(
+  rawCode: string,
+  clean: string
+): ExecutionResult {
   const hasTemplate = /template\s*<\s*(?:typename|class)\s+T\s*>/.test(clean);
   const hasReverseFunc = /reverseArray\s*\(/.test(clean);
-  const hasReverseLogic = /dest\[i\]\s*=\s*src\[n\s*-\s*1\s*-\s*i\]|dest\[n\s*-\s*1\s*-\s*i\]\s*=\s*src\[i\]/.test(clean);
+  const hasReverseLogic =
+    /dest\[i\]\s*=\s*src\[n\s*-\s*1\s*-\s*i\]|dest\[n\s*-\s*1\s*-\s*i\]\s*=\s*src\[i\]/.test(
+      clean
+    );
   const hasModelCheck = /2000/.test(clean);
 
   const frames: SimulationFrame[] = [
     {
-      description: "Initial Car Array: [Sunny (1998), Corolla (2019), Prado (2023)].",
+      description:
+        "Initial Car Array: [Sunny (1998), Corolla (2019), Prado (2023)].",
       array: ["Sunny (1998)", "Corolla (2019)", "Prado (2023)"],
-      variables: { size: 3, "c[0]": "Sunny (1998)", "c[1]": "Corolla (2019)", "c[2]": "Prado (2023)" }
+      variables: {
+        size: 3,
+        "c[0]": "Sunny (1998)",
+        "c[1]": "Corolla (2019)",
+        "c[2]": "Prado (2023)",
+      },
     },
     {
-      description: "Filter Model > 2000: Sunny (1998 <= 2000: Skip), Corolla (2019 > 2000: Match), Prado (2023 > 2000: Match).",
+      description:
+        "Filter Model > 2000: Sunny (1998 <= 2000: Skip), Corolla (2019 > 2000: Match), Prado (2023 > 2000: Match).",
       array: ["Sunny (1998)", "Corolla (2019)", "Prado (2023)"],
       highlightIndices: [1, 2],
-      variables: { filteredMatches: "Corolla (2019), Prado (2023)" }
+      variables: { filteredMatches: "Corolla (2019), Prado (2023)" },
     },
     {
-      description: "Template Reversal Step 1: dest[0] = src[2] -> 'Prado' copied to new array index 0.",
+      description:
+        "Template Reversal Step 1: dest[0] = src[2] -> 'Prado' copied to new array index 0.",
       array: ["Prado (2023)", null, null],
       pointers: { dest: 0, src: 2 },
       highlightIndices: [0],
-      variables: { copied: "src[2] -> dest[0]" }
+      variables: { copied: "src[2] -> dest[0]" },
     },
     {
-      description: "Template Reversal Step 2: dest[1] = src[1] -> 'Corolla' copied to new array index 1.",
+      description:
+        "Template Reversal Step 2: dest[1] = src[1] -> 'Corolla' copied to new array index 1.",
       array: ["Prado (2023)", "Corolla (2019)", null],
       pointers: { dest: 1, src: 1 },
       highlightIndices: [1],
-      variables: { copied: "src[1] -> dest[1]" }
+      variables: { copied: "src[1] -> dest[1]" },
     },
     {
-      description: "Template Reversal Complete: dest[2] = src[0] -> 'Sunny' copied. Reversed array: [Prado, Corolla, Sunny].",
+      description:
+        "Template Reversal Complete: dest[2] = src[0] -> 'Sunny' copied. Reversed array: [Prado, Corolla, Sunny].",
       array: ["Prado (2023)", "Corolla (2019)", "Sunny (1998)"],
       pointers: { dest: 2, src: 0 },
       highlightIndices: [0, 1, 2],
-      variables: { reversalStatus: "Complete", genericType: "T = car" }
-    }
+      variables: { reversalStatus: "Complete", genericType: "T = car" },
+    },
   ];
 
-  const isGoal = hasTemplate && hasReverseFunc && (hasReverseLogic || clean.includes("dest")) && hasModelCheck;
+  const isGoal =
+    hasTemplate &&
+    hasReverseFunc &&
+    (hasReverseLogic || clean.includes("dest")) &&
+    hasModelCheck;
 
-  const stdout = `Cars with model > 2000:\n` +
+  const stdout =
+    `Cars with model > 2000:\n` +
     `Corolla   2019      18000     2.0L      \n` +
     `Prado     2023      65000     4.0L      \n\n` +
     `Original Cars Before Reversal:\n` +
@@ -1123,7 +1433,10 @@ function simulateCarAssignment(rawCode: string, clean: string): ExecutionResult 
 /**
  * Module 6: OOP & Object Arrays — Calculator Class (t6_3)
  */
-function simulateCalculatorClass(rawCode: string, clean: string): ExecutionResult {
+function simulateCalculatorClass(
+  rawCode: string,
+  clean: string
+): ExecutionResult {
   const hasSum = /s\s*=\s*x\s*\+\s*y/.test(clean);
   const hasSub = /s\s*=\s*x\s*-\s*y/.test(clean);
   const hasMult = /s\s*=\s*x\s*\*\s*y/.test(clean);
@@ -1132,39 +1445,44 @@ function simulateCalculatorClass(rawCode: string, clean: string): ExecutionResul
 
   const frames: SimulationFrame[] = [
     {
-      description: "Calculator object initialized in memory: x = 10, y = 4, s = 0.0 (private encapsulation).",
+      description:
+        "Calculator object initialized in memory: x = 10, y = 4, s = 0.0 (private encapsulation).",
       array: [10, 4, 0.0],
-      variables: { x: 10, y: 4, s: "0.0", object: "calc" }
+      variables: { x: 10, y: 4, s: "0.0", object: "calc" },
     },
     {
-      description: "calc.sum(): 10 + 4 = 14. Member variable s updated to 14.0.",
+      description:
+        "calc.sum(): 10 + 4 = 14. Member variable s updated to 14.0.",
       array: [10, 4, 14.0],
       highlightIndices: [2],
-      variables: { operation: "10 + 4", result: "14.0" }
+      variables: { operation: "10 + 4", result: "14.0" },
     },
     {
       description: "calc.sub(): 10 - 4 = 6. Member variable s updated to 6.0.",
       array: [10, 4, 6.0],
       highlightIndices: [2],
-      variables: { operation: "10 - 4", result: "6.0" }
+      variables: { operation: "10 - 4", result: "6.0" },
     },
     {
-      description: "calc.mult(): 10 * 4 = 40. Member variable s updated to 40.0.",
+      description:
+        "calc.mult(): 10 * 4 = 40. Member variable s updated to 40.0.",
       array: [10, 4, 40.0],
       highlightIndices: [2],
-      variables: { operation: "10 * 4", result: "40.0" }
+      variables: { operation: "10 * 4", result: "40.0" },
     },
     {
-      description: "calc.div(): 10 / 4 = 2.5. Member variable s updated to 2.5.",
+      description:
+        "calc.div(): 10 / 4 = 2.5. Member variable s updated to 2.5.",
       array: [10, 4, 2.5],
       highlightIndices: [2],
-      variables: { operation: "10 / 4", result: "2.5" }
-    }
+      variables: { operation: "10 / 4", result: "2.5" },
+    },
   ];
 
   const isGoal = hasSum && hasSub && hasMult && hasDiv && hasGet;
 
-  const stdout = `the sum is 14\n` +
+  const stdout =
+    `the sum is 14\n` +
     `the sub is 6\n` +
     `the multi is 40\n` +
     `the div is 2.5\n\n` +
@@ -1190,7 +1508,8 @@ function simulateStack(rawCode: string, clean: string): ExecutionResult {
   const sizeMatch = clean.match(/#define\s+size\s+(\d+)/);
   if (sizeMatch) size = parseInt(sizeMatch[1], 10);
 
-  const hasPushOverflow = /stackTop\s*<\s*size\s*-\s*1|stackTop\s*\+=\s*1\s*<\s*size/i.test(clean);
+  const hasPushOverflow =
+    /stackTop\s*<\s*size\s*-\s*1|stackTop\s*\+=\s*1\s*<\s*size/i.test(clean);
   const hasPushAssign = /list\s*\[\s*stackTop\s*\]\s*=\s*data/i.test(clean);
   const hasPopUnderflow = /stackTop\s*>=\s*0|stackTop\s*>\s*-1/i.test(clean);
   const hasPopAssign = /list\s*\[\s*stackTop\s*\]/i.test(clean);
@@ -1207,7 +1526,8 @@ function simulateStack(rawCode: string, clean: string): ExecutionResult {
 
   stackArray[0] = 10;
   frames.push({
-    description: "Push(10): Overflow check passed (stackTop < size - 1). Incremented stackTop to 0 and stored 10.",
+    description:
+      "Push(10): Overflow check passed (stackTop < size - 1). Incremented stackTop to 0 and stored 10.",
     array: [...stackArray],
     pointers: { stackTop: 0 },
     highlightIndices: [0],
@@ -1216,7 +1536,8 @@ function simulateStack(rawCode: string, clean: string): ExecutionResult {
 
   stackArray[1] = 20;
   frames.push({
-    description: "Push(20): Overflow check passed. Incremented stackTop to 1 and stored 20.",
+    description:
+      "Push(20): Overflow check passed. Incremented stackTop to 1 and stored 20.",
     array: [...stackArray],
     pointers: { stackTop: 1 },
     highlightIndices: [1],
@@ -1224,19 +1545,21 @@ function simulateStack(rawCode: string, clean: string): ExecutionResult {
   });
 
   frames.push({
-    description: "Pop(): Underflow check passed (stackTop >= 0). Retrieved 20 from list[stackTop] and decremented stackTop to 0.",
+    description:
+      "Pop(): Underflow check passed (stackTop >= 0). Retrieved 20 from list[stackTop] and decremented stackTop to 0.",
     array: [...stackArray],
     pointers: { stackTop: 0 },
     highlightIndices: [1],
     variables: { stackTop: 0, poppedValue: 20, return: 20 },
   });
 
-  const isGoal = (hasPushOverflow || hasPushAssign) && (hasPopUnderflow || hasPopAssign);
+  const isGoal =
+    (hasPushOverflow || hasPushAssign) && (hasPopUnderflow || hasPopAssign);
 
   return {
     success: true,
     isTaskGoalAchieved: isGoal,
-    goalFeedback: isGoal 
+    goalFeedback: isGoal
       ? "Stack Push (with overflow check) and Pop (with underflow check) implemented correctly!"
       : "Stack simulator updated! Make sure your Push overflow and Pop underflow checks are complete to pass the exercise.",
     frames,
@@ -1255,25 +1578,28 @@ function simulateStackTop(rawCode: string, clean: string): ExecutionResult {
   const stackArray: (number | string | null)[] = [5, 12, 18, null, null];
   const frames: SimulationFrame[] = [
     {
-      description: "Stack currently contains elements [5, 12, 18] with stackTop at index 2.",
+      description:
+        "Stack currently contains elements [5, 12, 18] with stackTop at index 2.",
       array: [...stackArray],
       pointers: { stackTop: 2 },
       highlightIndices: [2],
       variables: { stackTop: 2, capacity: 5 },
     },
     {
-      description: "Calling isEmpty(): checks if (stackTop == -1). Evaluates to false.",
+      description:
+        "Calling isEmpty(): checks if (stackTop == -1). Evaluates to false.",
       array: [...stackArray],
       pointers: { stackTop: 2 },
       variables: { isEmpty: "false", stackTop: 2 },
     },
     {
-      description: "Calling Top(): accesses list[stackTop] -> returns 18 without modifying stackTop.",
+      description:
+        "Calling Top(): accesses list[stackTop] -> returns 18 without modifying stackTop.",
       array: [...stackArray],
       pointers: { stackTop: 2 },
       highlightIndices: [2],
       variables: { TopValue: 18, stackTop: 2 },
-    }
+    },
   ];
 
   const isGoal = hasIsEmpty && hasTopReturn;
@@ -1297,7 +1623,9 @@ function simulateQueuePushPop(rawCode: string, clean: string): ExecutionResult {
   const hasIsFull = /rear\s*==\s*size\s*-\s*1/i.test(clean);
   const hasIsEmpty = /front\s*==\s*-1/i.test(clean);
   const hasInsertion = /rear\+\+|a\s*\[\s*(?:\+\+rear|rear)\s*\]/i.test(clean);
-  const hasDeletion = /a\s*\[\s*front\s*\]/i.test(clean) && (/front\+\+|front\s*=\s*rear/i.test(clean));
+  const hasDeletion =
+    /a\s*\[\s*front\s*\]/i.test(clean) &&
+    /front\+\+|front\s*=\s*rear/i.test(clean);
 
   const isGoal = (hasIsFull || hasIsEmpty) && (hasInsertion || hasDeletion);
 
@@ -1309,36 +1637,39 @@ function simulateQueuePushPop(rawCode: string, clean: string): ExecutionResult {
       variables: { front: -1, rear: -1, status: "Empty" },
     },
     {
-      description: "insertion('A'): front set to 0, rear incremented to 0. a[0] = 'A'.",
-      array: ['A', null, null, null, null],
+      description:
+        "insertion('A'): front set to 0, rear incremented to 0. a[0] = 'A'.",
+      array: ["A", null, null, null, null],
       pointers: { front: 0, rear: 0 },
       highlightIndices: [0],
       variables: { front: 0, rear: 0, "a[0]": "'A'" },
     },
     {
       description: "insertion('B'): rear incremented to 1. a[1] = 'B'.",
-      array: ['A', 'B', null, null, null],
+      array: ["A", "B", null, null, null],
       pointers: { front: 0, rear: 1 },
       highlightIndices: [1],
       variables: { front: 0, rear: 1, "a[1]": "'B'" },
     },
     {
       description: "insertion('C'): rear incremented to 2. a[2] = 'C'.",
-      array: ['A', 'B', 'C', null, null],
+      array: ["A", "B", "C", null, null],
       pointers: { front: 0, rear: 2 },
       highlightIndices: [2],
       variables: { front: 0, rear: 2, "a[2]": "'C'" },
     },
     {
-      description: "deletion(): Dequeued 'A' from front. front incremented to index 1.",
-      array: ['A', 'B', 'C', null, null],
+      description:
+        "deletion(): Dequeued 'A' from front. front incremented to index 1.",
+      array: ["A", "B", "C", null, null],
       pointers: { front: 1, rear: 2 },
       highlightIndices: [0],
       variables: { front: 1, rear: 2, deletedItem: "'A'" },
     },
     {
-      description: "firstel(): Front of queue points to index 1 containing 'B'.",
-      array: ['A', 'B', 'C', null, null],
+      description:
+        "firstel(): Front of queue points to index 1 containing 'B'.",
+      array: ["A", "B", "C", null, null],
       pointers: { front: 1, rear: 2 },
       highlightIndices: [1],
       variables: { frontValue: "'B'", front: 1, rear: 2 },
@@ -1363,49 +1694,59 @@ function simulateQueuePushPop(rawCode: string, clean: string): ExecutionResult {
 function simulateSplitQueue(rawCode: string, clean: string): ExecutionResult {
   const hasHalf = /elements\(\)\s*\/\s*2|half/i.test(clean);
   const hasWhile = /while\s*\(\s*!q\.is(?:empty|Empty)\(\)\s*\)/i.test(clean);
-  const hasSplitInsert = /q1\.(?:insertion|insearion).*?q2\.(?:insertion|insearion)/is.test(clean);
+  const hasSplitInsert =
+    /q1\.(?:insertion|insearion).*?q2\.(?:insertion|insearion)/is.test(clean);
 
   const isGoal = hasHalf && (hasWhile || hasSplitInsert);
 
   const frames: SimulationFrame[] = [
     {
-      description: "Source queue q with 4 elements: ['A', 'B', 'C', 'D']. half = 4 / 2 = 2.",
-      array: ['A', 'B', 'C', 'D', null],
+      description:
+        "Source queue q with 4 elements: ['A', 'B', 'C', 'D']. half = 4 / 2 = 2.",
+      array: ["A", "B", "C", "D", null],
       pointers: { front: 0, rear: 3 },
       variables: { count: 4, half: 2, c: 0 },
     },
     {
-      description: "c = 0 (< half): Dequeued 'A' from q, inserted into sub-queue q1.",
-      array: ['A', 'B', 'C', 'D', null],
+      description:
+        "c = 0 (< half): Dequeued 'A' from q, inserted into sub-queue q1.",
+      array: ["A", "B", "C", "D", null],
       pointers: { front: 1 },
       highlightIndices: [0],
       variables: { c: 0, half: 2, item: "'A'", destination: "q1" },
     },
     {
-      description: "c = 1 (< half): Dequeued 'B' from q, inserted into sub-queue q1.",
-      array: ['A', 'B', 'C', 'D', null],
+      description:
+        "c = 1 (< half): Dequeued 'B' from q, inserted into sub-queue q1.",
+      array: ["A", "B", "C", "D", null],
       pointers: { front: 2 },
       highlightIndices: [1],
       variables: { c: 1, half: 2, item: "'B'", destination: "q1" },
     },
     {
-      description: "c = 2 (>= half): Dequeued 'C' from q, inserted into sub-queue q2.",
-      array: ['A', 'B', 'C', 'D', null],
+      description:
+        "c = 2 (>= half): Dequeued 'C' from q, inserted into sub-queue q2.",
+      array: ["A", "B", "C", "D", null],
       pointers: { front: 3 },
       highlightIndices: [2],
       variables: { c: 2, half: 2, item: "'C'", destination: "q2" },
     },
     {
-      description: "c = 3 (>= half): Dequeued 'D' from q, inserted into sub-queue q2.",
-      array: ['A', 'B', 'C', 'D', null],
+      description:
+        "c = 3 (>= half): Dequeued 'D' from q, inserted into sub-queue q2.",
+      array: ["A", "B", "C", "D", null],
       pointers: { front: 3 },
       highlightIndices: [3],
       variables: { c: 3, half: 2, item: "'D'", destination: "q2" },
     },
     {
       description: "Split Complete: q1 has ['A', 'B'], q2 has ['C', 'D'].",
-      array: ['A', 'B', 'C', 'D', null],
-      variables: { "q1 contents": "A    B", "q2 contents": "C    D", status: "Split Successful" },
+      array: ["A", "B", "C", "D", null],
+      variables: {
+        "q1 contents": "A    B",
+        "q2 contents": "C    D",
+        status: "Split Successful",
+      },
     },
   ];
 
@@ -1424,7 +1765,10 @@ function simulateSplitQueue(rawCode: string, clean: string): ExecutionResult {
 /**
  * Task t9_1: Circular Queue: Modulo Wrap-Around
  */
-function simulateCircularQueue(rawCode: string, clean: string): ExecutionResult {
+function simulateCircularQueue(
+  rawCode: string,
+  clean: string
+): ExecutionResult {
   const hasFullCheck = /\(rear\s*\+\s*1\)\s*%\s*size\s*==\s*front/i.test(clean);
   const hasRearWrap = /rear\s*=\s*\(rear\s*\+\s*1\)\s*%\s*size/i.test(clean);
   const hasFrontWrap = /front\s*=\s*\(front\s*\+\s*1\)\s*%\s*size/i.test(clean);
@@ -1433,7 +1777,8 @@ function simulateCircularQueue(rawCode: string, clean: string): ExecutionResult 
 
   const frames: SimulationFrame[] = [
     {
-      description: "Circular Queue initialized: front = -1, rear = -1. Size = 5.",
+      description:
+        "Circular Queue initialized: front = -1, rear = -1. Size = 5.",
       array: [null, null, null, null, null],
       pointers: {},
       variables: { front: -1, rear: -1, capacity: 5 },
@@ -1446,7 +1791,8 @@ function simulateCircularQueue(rawCode: string, clean: string): ExecutionResult 
       variables: { front: 0, rear: 2 },
     },
     {
-      description: "del(): Dequeued 10 from index 0. front wrapped to index (0 + 1) % 5 = 1.",
+      description:
+        "del(): Dequeued 10 from index 0. front wrapped to index (0 + 1) % 5 = 1.",
       array: [10, 20, 30, null, null],
       pointers: { front: 1, rear: 2 },
       highlightIndices: [0],
@@ -1460,11 +1806,17 @@ function simulateCircularQueue(rawCode: string, clean: string): ExecutionResult 
       variables: { front: 1, rear: 4 },
     },
     {
-      description: "insert(60): Modulo wrap-around! rear = (4 + 1) % 5 = 0. Reuses free index 0!",
+      description:
+        "insert(60): Modulo wrap-around! rear = (4 + 1) % 5 = 0. Reuses free index 0!",
       array: [60, 20, 30, 40, 50],
       pointers: { front: 1, rear: 0 },
       highlightIndices: [0],
-      variables: { wrappedRear: 0, front: 1, item: 60, status: "False overflow eliminated!" },
+      variables: {
+        wrappedRear: 0,
+        front: 1,
+        item: 60,
+        status: "False overflow eliminated!",
+      },
     },
   ];
 
@@ -1485,53 +1837,65 @@ function simulateCircularQueue(rawCode: string, clean: string): ExecutionResult 
  */
 function simulateReverseQueue(rawCode: string, clean: string): ExecutionResult {
   const hasQueueToStack = /s\.push\s*\(\s*q\.delet/i.test(clean);
-  const hasStackToQueue = /q\.insert.*s\.top\(\)/is.test(clean) || (/s\.top\(\)/i.test(clean) && /s\.pop\(\)/i.test(clean));
+  const hasStackToQueue =
+    /q\.insert.*s\.top\(\)/is.test(clean) ||
+    (/s\.top\(\)/i.test(clean) && /s\.pop\(\)/i.test(clean));
 
   const isGoal = hasQueueToStack && hasStackToQueue;
 
   const frames: SimulationFrame[] = [
     {
       description: "Initial Queue: ['A', 'B', 'C', 'D']. front = 0, rear = 3.",
-      array: ['A', 'B', 'C', 'D', null],
+      array: ["A", "B", "C", "D", null],
       pointers: { front: 0, rear: 3 },
       variables: { step: "1. Initial FIFO Queue" },
     },
     {
-      description: "Step 1: Dequeued all items and pushed onto Stack. Stack Top is 'D', Bottom is 'A'.",
+      description:
+        "Step 1: Dequeued all items and pushed onto Stack. Stack Top is 'D', Bottom is 'A'.",
       array: [null, null, null, null, null],
-      variables: { stackTop: "'D'", "stack items": "D, C, B, A", queue: "Empty" },
+      variables: {
+        stackTop: "'D'",
+        "stack items": "D, C, B, A",
+        queue: "Empty",
+      },
     },
     {
-      description: "Step 2a: Popped 'D' from Stack -> enqueued into Queue at a[0].",
-      array: ['D', null, null, null, null],
+      description:
+        "Step 2a: Popped 'D' from Stack -> enqueued into Queue at a[0].",
+      array: ["D", null, null, null, null],
       pointers: { front: 0, rear: 0 },
       highlightIndices: [0],
       variables: { popped: "'D'", front: 0, rear: 0 },
     },
     {
-      description: "Step 2b: Popped 'C' from Stack -> enqueued into Queue at a[1].",
-      array: ['D', 'C', null, null, null],
+      description:
+        "Step 2b: Popped 'C' from Stack -> enqueued into Queue at a[1].",
+      array: ["D", "C", null, null, null],
       pointers: { front: 0, rear: 1 },
       highlightIndices: [1],
       variables: { popped: "'C'", front: 0, rear: 1 },
     },
     {
-      description: "Step 2c: Popped 'B' from Stack -> enqueued into Queue at a[2].",
-      array: ['D', 'C', 'B', null, null],
+      description:
+        "Step 2c: Popped 'B' from Stack -> enqueued into Queue at a[2].",
+      array: ["D", "C", "B", null, null],
       pointers: { front: 0, rear: 2 },
       highlightIndices: [2],
       variables: { popped: "'B'", front: 0, rear: 2 },
     },
     {
-      description: "Step 2d: Popped 'A' from Stack -> enqueued into Queue at a[3].",
-      array: ['D', 'C', 'B', 'A', null],
+      description:
+        "Step 2d: Popped 'A' from Stack -> enqueued into Queue at a[3].",
+      array: ["D", "C", "B", "A", null],
       pointers: { front: 0, rear: 3 },
       highlightIndices: [3],
       variables: { popped: "'A'", front: 0, rear: 3 },
     },
     {
-      description: "Queue Reversal Complete: Original ['A','B','C','D'] is now ['D','C','B','A']!",
-      array: ['D', 'C', 'B', 'A', null],
+      description:
+        "Queue Reversal Complete: Original ['A','B','C','D'] is now ['D','C','B','A']!",
+      array: ["D", "C", "B", "A", null],
       pointers: { front: 0, rear: 3 },
       variables: { result: "Reversed Successfully via Stack LIFO" },
     },
@@ -1552,7 +1916,10 @@ function simulateReverseQueue(rawCode: string, clean: string): ExecutionResult {
 /**
  * Task t9_3: Search in a Circular Queue
  */
-function simulateCircularQueueSearch(rawCode: string, clean: string): ExecutionResult {
+function simulateCircularQueueSearch(
+  rawCode: string,
+  clean: string
+): ExecutionResult {
   const hasModuloLoop = /\(i\s*\+\s*1\)\s*%\s*size/i.test(clean);
   const hasTargetComparison = /==\s*target/i.test(clean);
 
@@ -1560,20 +1927,23 @@ function simulateCircularQueueSearch(rawCode: string, clean: string): ExecutionR
 
   const frames: SimulationFrame[] = [
     {
-      description: "Circular Queue with elements [10, 20, 30]. Searching for target = 20.",
+      description:
+        "Circular Queue with elements [10, 20, 30]. Searching for target = 20.",
       array: [10, 20, 30, null, null],
       pointers: { front: 0, rear: 2 },
       variables: { target: 20, front: 0, rear: 2 },
     },
     {
-      description: "Step 1: Inspect index i = 0 (cqueue_arr[0] = 10 != 20). Next index = (0 + 1) % 5 = 1.",
+      description:
+        "Step 1: Inspect index i = 0 (cqueue_arr[0] = 10 != 20). Next index = (0 + 1) % 5 = 1.",
       array: [10, 20, 30, null, null],
       pointers: { i: 0 },
       highlightIndices: [0],
       variables: { i: 0, "cqueue_arr[i]": 10, match: "false" },
     },
     {
-      description: "Step 2: Inspect index i = 1 (cqueue_arr[1] = 20 == 20). Target found!",
+      description:
+        "Step 2: Inspect index i = 1 (cqueue_arr[1] = 20 == 20). Target found!",
       array: [10, 20, 30, null, null],
       pointers: { i: 1 },
       highlightIndices: [1],
@@ -1597,59 +1967,90 @@ function simulateCircularQueueSearch(rawCode: string, clean: string): ExecutionR
  * Module 10 Task 1: Singly Linked List Core Operations (Lab 8 Q1)
  */
 function simulateSLLCore(rawCode: string, clean: string): ExecutionResult {
-  const hasAddToHead = /addToHead\s*\([^)]*\)\s*\{[\s\S]*?(?:head\s*=\s*new|new\s+IntSLLNode\s*\(el)/.test(clean);
-  const hasAddToTail = /addToTail\s*\([^)]*\)\s*\{[\s\S]*?(?:tail->next\s*=\s*new|tail\s*=\s*new|head\s*=\s*tail)/.test(clean);
-  const hasDeleteHead = /deleteFromHead\s*\(\)\s*\{[\s\S]*?(?:head\s*=\s*head->next|delete\s+tmp)/.test(clean);
-  const hasDeleteTail = /deleteFromTail\s*\(\)\s*\{[\s\S]*?(?:tail\s*=\s*tmp|delete\s+tail)/.test(clean);
-  const hasDeleteNode = /deleteNode\s*\([^)]*\)\s*\{[\s\S]*?(?:pred->next\s*=\s*tmp->next|delete\s+tmp)/.test(clean);
-  const hasSearch = /isInList\s*\([^)]*\)\s*\{[\s\S]*?(?:tmp->info\s*==\s*el|==\s*el)/.test(clean);
+  const hasAddToHead =
+    /addToHead\s*\([^)]*\)\s*\{[\s\S]*?(?:head\s*=\s*new|new\s+IntSLLNode\s*\(el)/.test(
+      clean
+    );
+  const hasAddToTail =
+    /addToTail\s*\([^)]*\)\s*\{[\s\S]*?(?:tail->next\s*=\s*new|tail\s*=\s*new|head\s*=\s*tail)/.test(
+      clean
+    );
+  const hasDeleteHead =
+    /deleteFromHead\s*\(\)\s*\{[\s\S]*?(?:head\s*=\s*head->next|delete\s+tmp)/.test(
+      clean
+    );
+  const hasDeleteTail =
+    /deleteFromTail\s*\(\)\s*\{[\s\S]*?(?:tail\s*=\s*tmp|delete\s+tail)/.test(
+      clean
+    );
+  const hasDeleteNode =
+    /deleteNode\s*\([^)]*\)\s*\{[\s\S]*?(?:pred->next\s*=\s*tmp->next|delete\s+tmp)/.test(
+      clean
+    );
+  const hasSearch =
+    /isInList\s*\([^)]*\)\s*\{[\s\S]*?(?:tmp->info\s*==\s*el|==\s*el)/.test(
+      clean
+    );
 
-  const isGoal = hasAddToHead && hasAddToTail && hasDeleteHead && hasDeleteTail && hasDeleteNode && hasSearch;
+  const isGoal =
+    hasAddToHead &&
+    hasAddToTail &&
+    hasDeleteHead &&
+    hasDeleteTail &&
+    hasDeleteNode &&
+    hasSearch;
 
   const frames: SimulationFrame[] = [
     {
-      description: "Empty Linked List initialized: head = 0 (null), tail = 0 (null).",
+      description:
+        "Empty Linked List initialized: head = 0 (null), tail = 0 (null).",
       array: [],
       pointers: {},
       variables: { head: "0x0 (null)", tail: "0x0 (null)", status: "Empty" },
     },
     {
-      description: "addToHead(44): Single node created. Both head and tail point to [44].",
+      description:
+        "addToHead(44): Single node created. Both head and tail point to [44].",
       array: [44],
       pointers: { head: 0, tail: 0 },
       highlightIndices: [0],
       variables: { headVal: 44, tailVal: 44, length: 1 },
     },
     {
-      description: "addToTail(10, 20, 30, 40): Linked list populated with 5 nodes in contiguous chain.",
+      description:
+        "addToTail(10, 20, 30, 40): Linked list populated with 5 nodes in contiguous chain.",
       array: [44, 10, 20, 30, 40],
       pointers: { head: 0, tail: 4 },
       highlightIndices: [1, 2, 3, 4],
       variables: { head: 44, tail: 40, length: 5 },
     },
     {
-      description: "deleteFromHead(): Deallocated node 44. head advances to index 0 containing 10.",
+      description:
+        "deleteFromHead(): Deallocated node 44. head advances to index 0 containing 10.",
       array: [10, 20, 30, 40],
       pointers: { head: 0, tail: 3 },
       highlightIndices: [0],
       variables: { deleted: 44, newHead: 10 },
     },
     {
-      description: "deleteFromTail(): Predecessor traversal finds node 30. tail reassigned to 30; node 40 deleted.",
+      description:
+        "deleteFromTail(): Predecessor traversal finds node 30. tail reassigned to 30; node 40 deleted.",
       array: [10, 20, 30],
       pointers: { head: 0, tail: 2 },
       highlightIndices: [2],
       variables: { deleted: 40, newTail: 30 },
     },
     {
-      description: "deleteNode(20): pred points to 10, tmp points to 20. pred->next = tmp->next unlinks 20 cleanly.",
+      description:
+        "deleteNode(20): pred points to 10, tmp points to 20. pred->next = tmp->next unlinks 20 cleanly.",
       array: [10, 30],
       pointers: { head: 0, tail: 1 },
       highlightIndices: [1],
       variables: { unlinkedNode: 20, size: 2 },
     },
     {
-      description: "isInList(30): Linear traversal inspects node 30 -> match confirmed! Returns true.",
+      description:
+        "isInList(30): Linear traversal inspects node 30 -> match confirmed! Returns true.",
       array: [10, 30],
       pointers: { head: 0, tail: 1, tmp: 1 },
       highlightIndices: [1],
@@ -1672,57 +2073,71 @@ function simulateSLLCore(rawCode: string, clean: string): ExecutionResult {
 /**
  * Module 10 Task 2: Node Filtering, Count & Maximum Element (Lab 8 Q2)
  */
-function simulateSLLFilterAndStats(rawCode: string, clean: string): ExecutionResult {
-  const hasZeroCheck = /check_zero\s*\(\)\s*\{[\s\S]*?(?:p->info\s*==\s*0|deleteNode)/.test(clean);
-  const hasLarge = /large\s*\(\)\s*\{[\s\S]*?(?:<\s*q->info|q->info\s*>\s*x)/.test(clean);
-  const hasCount = /count\s*\(\)\s*\{[\s\S]*?(?:c\+\+|count\+\+|\+\+c)/.test(clean);
+function simulateSLLFilterAndStats(
+  rawCode: string,
+  clean: string
+): ExecutionResult {
+  const hasZeroCheck =
+    /check_zero\s*\(\)\s*\{[\s\S]*?(?:p->info\s*==\s*0|deleteNode)/.test(clean);
+  const hasLarge =
+    /large\s*\(\)\s*\{[\s\S]*?(?:<\s*q->info|q->info\s*>\s*x)/.test(clean);
+  const hasCount = /count\s*\(\)\s*\{[\s\S]*?(?:c\+\+|count\+\+|\+\+c)/.test(
+    clean
+  );
 
   const isGoal = hasZeroCheck && hasLarge && hasCount;
 
   const frames: SimulationFrame[] = [
     {
-      description: "List initialized with zero-value noise: [15, 0, 42, 0, 8, 99, 0]. Node count = 7.",
+      description:
+        "List initialized with zero-value noise: [15, 0, 42, 0, 8, 99, 0]. Node count = 7.",
       array: [15, 0, 42, 0, 8, 99, 0],
       pointers: { head: 0, tail: 6 },
       variables: { count: 7, head: 15, tail: 0 },
     },
     {
-      description: "count() executed: Traversed all 7 nodes from head to tail. Total count = 7.",
+      description:
+        "count() executed: Traversed all 7 nodes from head to tail. Total count = 7.",
       array: [15, 0, 42, 0, 8, 99, 0],
       pointers: { q: 6 },
       highlightIndices: [0, 1, 2, 3, 4, 5, 6],
       variables: { nodeCount: 7 },
     },
     {
-      description: "large() executed: Scanned nodes, tracking max value: 15 -> 42 -> 99. Max = 99.",
+      description:
+        "large() executed: Scanned nodes, tracking max value: 15 -> 42 -> 99. Max = 99.",
       array: [15, 0, 42, 0, 8, 99, 0],
       pointers: { maxNode: 5 },
       highlightIndices: [5],
       variables: { maxValue: 99 },
     },
     {
-      description: "check_zero(): Found node with info == 0 at index 1. Unlinked and deallocated.",
+      description:
+        "check_zero(): Found node with info == 0 at index 1. Unlinked and deallocated.",
       array: [15, 42, 0, 8, 99, 0],
       pointers: { head: 0, p: 1 },
       highlightIndices: [1],
       variables: { zeroRemoved: 0 },
     },
     {
-      description: "check_zero(): Found node with info == 0 at index 2. Unlinked and deallocated.",
+      description:
+        "check_zero(): Found node with info == 0 at index 2. Unlinked and deallocated.",
       array: [15, 42, 8, 99, 0],
       pointers: { head: 0, p: 2 },
       highlightIndices: [2],
       variables: { zeroRemoved: 0 },
     },
     {
-      description: "check_zero(): Found tail node with info == 0. Tail adjusted to node 99.",
+      description:
+        "check_zero(): Found tail node with info == 0. Tail adjusted to node 99.",
       array: [15, 42, 8, 99],
       pointers: { head: 0, tail: 3 },
       highlightIndices: [3],
       variables: { cleanTail: 99, totalPurged: 3 },
     },
     {
-      description: "Filtering Complete: List has 4 valid nodes [15, 42, 8, 99]. All zeros removed.",
+      description:
+        "Filtering Complete: List has 4 valid nodes [15, 42, 8, 99]. All zeros removed.",
       array: [15, 42, 8, 99],
       pointers: { head: 0, tail: 3 },
       variables: { remainingNodes: 4, max: 99 },
@@ -1744,42 +2159,58 @@ function simulateSLLFilterAndStats(rawCode: string, clean: string): ExecutionRes
 /**
  * Module 10 Task 3: Split Linked List by Parity (Lab 8 Q3)
  */
-function simulateSLLSplitParity(rawCode: string, clean: string): ExecutionResult {
-  const hasCheck = /check\s*\(\)\s*\{[\s\S]*?(?:%\s*2\s*==\s*0|addToTail1|addToTail2)/.test(clean);
-  const hasEvenOdd = /addToTail1[\s\S]*?addToTail2|addToTail2[\s\S]*?addToTail1/.test(clean);
+function simulateSLLSplitParity(
+  rawCode: string,
+  clean: string
+): ExecutionResult {
+  const hasCheck =
+    /check\s*\(\)\s*\{[\s\S]*?(?:%\s*2\s*==\s*0|addToTail1|addToTail2)/.test(
+      clean
+    );
+  const hasEvenOdd =
+    /addToTail1[\s\S]*?addToTail2|addToTail2[\s\S]*?addToTail1/.test(clean);
 
   const isGoal = hasCheck && hasEvenOdd;
 
   const frames: SimulationFrame[] = [
     {
-      description: "Main list populated with 15 nodes: [0, 3, 6, 9, 12, 15, 18, 21, 24, 27, 30, 33, 36, 39, 42].",
+      description:
+        "Main list populated with 15 nodes: [0, 3, 6, 9, 12, 15, 18, 21, 24, 27, 30, 33, 36, 39, 42].",
       array: [0, 3, 6, 9, 12, 15, 18, 21, 24, 27, 30, 33, 36, 39, 42],
       pointers: { head: 0, tail: 14 },
       variables: { totalNodes: 15, head: 0, tail: 42 },
     },
     {
-      description: "check(): Processing node 0 (0 % 2 == 0 -> Even). Enqueued into Even List (head1).",
+      description:
+        "check(): Processing node 0 (0 % 2 == 0 -> Even). Enqueued into Even List (head1).",
       array: [0, 3, 6, 9, 12, 15, 18, 21, 24, 27, 30, 33, 36, 39, 42],
       highlightIndices: [0],
       variables: { node: 0, parity: "Even", destination: "head1" },
     },
     {
-      description: "check(): Processing node 3 (3 % 2 != 0 -> Odd). Enqueued into Odd List (head2).",
+      description:
+        "check(): Processing node 3 (3 % 2 != 0 -> Odd). Enqueued into Odd List (head2).",
       array: [0, 3, 6, 9, 12, 15, 18, 21, 24, 27, 30, 33, 36, 39, 42],
       highlightIndices: [1],
       variables: { node: 3, parity: "Odd", destination: "head2" },
     },
     {
-      description: "Splitting in progress... Nodes partitioned into Even (list1) and Odd (list2) sublists.",
+      description:
+        "Splitting in progress... Nodes partitioned into Even (list1) and Odd (list2) sublists.",
       array: [0, 6, 12, 18, 24, 30, 36, 42],
       highlightIndices: [0, 1, 2, 3, 4, 5, 6, 7],
       variables: { evenCount: 8, oddCount: 7 },
     },
     {
-      description: "Split Complete! Even List: [0, 6, 12, 18, 24, 30, 36, 42] | Odd List: [3, 9, 15, 21, 27, 33, 39] | Main List: Empty.",
+      description:
+        "Split Complete! Even List: [0, 6, 12, 18, 24, 30, 36, 42] | Odd List: [3, 9, 15, 21, 27, 33, 39] | Main List: Empty.",
       array: [0, 6, 12, 18, 24, 30, 36, 42],
       pointers: { head1: 0, tail1: 7 },
-      variables: { evenList: "0, 6, 12, 18, 24, 30, 36, 42", oddList: "3, 9, 15, 21, 27, 33, 39", mainList: "Empty" },
+      variables: {
+        evenList: "0, 6, 12, 18, 24, 30, 36, 42",
+        oddList: "3, 9, 15, 21, 27, 33, 39",
+        mainList: "Empty",
+      },
     },
   ];
 
@@ -1800,48 +2231,56 @@ function simulateSLLSplitParity(rawCode: string, clean: string): ExecutionResult
  */
 function simulateSLLSort(rawCode: string, clean: string): ExecutionResult {
   const hasOuterLoop = /for\s*\(\s*IntSLLNode\s*\*\s*i\s*=\s*head/.test(clean);
-  const hasInnerLoop = /for\s*\(\s*IntSLLNode\s*\*\s*j\s*=\s*i->next/.test(clean);
+  const hasInnerLoop = /for\s*\(\s*IntSLLNode\s*\*\s*j\s*=\s*i->next/.test(
+    clean
+  );
   const hasSwap = /i->info\s*>\s*j->info|swap\s*\(/.test(clean);
 
   const isGoal = hasOuterLoop && hasInnerLoop && hasSwap;
 
   const frames: SimulationFrame[] = [
     {
-      description: "Unsorted list of 10 nodes: [64, 34, 25, 12, 22, 11, 90, 88, 45, 50].",
+      description:
+        "Unsorted list of 10 nodes: [64, 34, 25, 12, 22, 11, 90, 88, 45, 50].",
       array: [64, 34, 25, 12, 22, 11, 90, 88, 45, 50],
       pointers: { head: 0, tail: 9 },
       variables: { status: "Unsorted" },
     },
     {
-      description: "Pass 1: Comparing i (64) with j (34, 25, 12, 11). Smallest value 11 swapped into head!",
+      description:
+        "Pass 1: Comparing i (64) with j (34, 25, 12, 11). Smallest value 11 swapped into head!",
       array: [11, 64, 34, 25, 22, 12, 90, 88, 45, 50],
       pointers: { i: 0 },
       highlightIndices: [0],
       variables: { headValue: 11 },
     },
     {
-      description: "Pass 2: Pointer i advances to index 1. Smallest in remaining list (12) placed into index 1.",
+      description:
+        "Pass 2: Pointer i advances to index 1. Smallest in remaining list (12) placed into index 1.",
       array: [11, 12, 64, 34, 25, 22, 90, 88, 45, 50],
       pointers: { i: 1 },
       highlightIndices: [1],
       variables: { sortedPrefix: "11, 12" },
     },
     {
-      description: "Pass 3-5: Elements 22, 25, and 34 sorted into proper node positions.",
+      description:
+        "Pass 3-5: Elements 22, 25, and 34 sorted into proper node positions.",
       array: [11, 12, 22, 25, 34, 64, 90, 88, 45, 50],
       pointers: { i: 4 },
       highlightIndices: [2, 3, 4],
       variables: { activeIndex: 4 },
     },
     {
-      description: "Pass 6-9: Remaining elements [45, 50, 64, 88, 90] bubble into ascending positions.",
+      description:
+        "Pass 6-9: Remaining elements [45, 50, 64, 88, 90] bubble into ascending positions.",
       array: [11, 12, 22, 25, 34, 45, 50, 64, 88, 90],
       pointers: { i: 8 },
       highlightIndices: [5, 6, 7, 8, 9],
       variables: { status: "Almost Sorted" },
     },
     {
-      description: "Sorting Complete: Singly linked list of 10 nodes fully sorted in ascending order!",
+      description:
+        "Sorting Complete: Singly linked list of 10 nodes fully sorted in ascending order!",
       array: [11, 12, 22, 25, 34, 45, 50, 64, 88, 90],
       pointers: { head: 0, tail: 9 },
       highlightIndices: [0, 9],
@@ -1864,55 +2303,71 @@ function simulateSLLSort(rawCode: string, clean: string): ExecutionResult {
 /**
  * Module 10 Task 5: Pairwise Sum of Two Linked Lists (Lab 8 Assignment Q2)
  */
-function simulateSLLSumTwoLists(rawCode: string, clean: string): ExecutionResult {
-  const hasBothTraversal = /p1\s*!=\s*0\s*&&\s*p2\s*!=\s*0|p1\s*&&\s*p2/.test(clean);
+function simulateSLLSumTwoLists(
+  rawCode: string,
+  clean: string
+): ExecutionResult {
+  const hasBothTraversal = /p1\s*!=\s*0\s*&&\s*p2\s*!=\s*0|p1\s*&&\s*p2/.test(
+    clean
+  );
   const hasSumAndInsert = /p1->info\s*\+\s*p2->info|addToTail/.test(clean);
 
   const isGoal = hasBothTraversal && hasSumAndInsert;
 
   const frames: SimulationFrame[] = [
     {
-      description: "List 1: [10, 20, 30, 40, 50] | List 2: [5, 15, 25, 35, 45]. List 3 initialized as empty.",
+      description:
+        "List 1: [10, 20, 30, 40, 50] | List 2: [5, 15, 25, 35, 45]. List 3 initialized as empty.",
       array: [null, null, null, null, null],
-      variables: { "List 1": "10, 20, 30, 40, 50", "List 2": "5, 15, 25, 35, 45", "List 3": "Empty" },
+      variables: {
+        "List 1": "10, 20, 30, 40, 50",
+        "List 2": "5, 15, 25, 35, 45",
+        "List 3": "Empty",
+      },
     },
     {
-      description: "Node 0: p1->info (10) + p2->info (5) = 15. Added 15 to List 3.",
+      description:
+        "Node 0: p1->info (10) + p2->info (5) = 15. Added 15 to List 3.",
       array: [15, null, null, null, null],
       pointers: { p1: 0, p2: 0, l3_tail: 0 },
       highlightIndices: [0],
       variables: { "p1->info": 10, "p2->info": 5, sum: 15 },
     },
     {
-      description: "Node 1: p1->info (20) + p2->info (15) = 35. Added 35 to List 3.",
+      description:
+        "Node 1: p1->info (20) + p2->info (15) = 35. Added 35 to List 3.",
       array: [15, 35, null, null, null],
       pointers: { p1: 1, p2: 1, l3_tail: 1 },
       highlightIndices: [1],
       variables: { "p1->info": 20, "p2->info": 15, sum: 35 },
     },
     {
-      description: "Node 2: p1->info (30) + p2->info (25) = 55. Added 55 to List 3.",
+      description:
+        "Node 2: p1->info (30) + p2->info (25) = 55. Added 55 to List 3.",
       array: [15, 35, 55, null, null],
       pointers: { p1: 2, p2: 2, l3_tail: 2 },
       highlightIndices: [2],
       variables: { "p1->info": 30, "p2->info": 25, sum: 55 },
     },
     {
-      description: "Node 3: p1->info (40) + p2->info (35) = 75. Added 75 to List 3.",
+      description:
+        "Node 3: p1->info (40) + p2->info (35) = 75. Added 75 to List 3.",
       array: [15, 35, 55, 75, null],
       pointers: { p1: 3, p2: 3, l3_tail: 3 },
       highlightIndices: [3],
       variables: { "p1->info": 40, "p2->info": 35, sum: 75 },
     },
     {
-      description: "Node 4: p1->info (50) + p2->info (45) = 95. Added 95 to List 3.",
+      description:
+        "Node 4: p1->info (50) + p2->info (45) = 95. Added 95 to List 3.",
       array: [15, 35, 55, 75, 95],
       pointers: { p1: 4, p2: 4, l3_tail: 4 },
       highlightIndices: [4],
       variables: { "p1->info": 50, "p2->info": 45, sum: 95 },
     },
     {
-      description: "Pairwise Sum Complete! List 3 contains [15, 35, 55, 75, 95].",
+      description:
+        "Pairwise Sum Complete! List 3 contains [15, 35, 55, 75, 95].",
       array: [15, 35, 55, 75, 95],
       pointers: { l3_head: 0, l3_tail: 4 },
       variables: { resultList: "15, 35, 55, 75, 95", status: "Success" },
@@ -1934,44 +2389,68 @@ function simulateSLLSumTwoLists(rawCode: string, clean: string): ExecutionResult
 /**
  * t3_3: Binary Search Range with Midpoint Overflow Protection
  */
-function simulateBinarySearchWithRange(rawCode: string, clean: string): ExecutionResult {
-  const hasRangeCalc = /left\s*\+\s*\(right\s*-\s*left\)\s*\/\s*2|\(left\s*\+\s*right\)\s*\/\s*2/.test(clean);
-  const hasUpdates = /left\s*=\s*mid\s*\+\s*1/.test(clean) && /right\s*=\s*mid\s*-\s*1/.test(clean);
+function simulateBinarySearchWithRange(
+  rawCode: string,
+  clean: string
+): ExecutionResult {
+  const hasRangeCalc =
+    /left\s*\+\s*\(right\s*-\s*left\)\s*\/\s*2|\(left\s*\+\s*right\)\s*\/\s*2/.test(
+      clean
+    );
+  const hasUpdates =
+    /left\s*=\s*mid\s*\+\s*1/.test(clean) &&
+    /right\s*=\s*mid\s*-\s*1/.test(clean);
   const hasLoop = /while\s*\(\s*left\s*<=\s*right\s*\)/.test(clean);
   const isGoal = hasRangeCalc && hasUpdates && hasLoop;
 
-  const arr = [2, 10, 25, 30, 45, 50, 65, 75, 80, 95];
-  const target = 50;
+  const arr = parseFirstNumericArray(
+    clean,
+    [2, 10, 25, 30, 45, 50, 65, 75, 80, 95]
+  );
+  const targetMatch = clean.match(
+    /binarysearch\s*\([^,]+,\s*(-?\d+)\s*\)|search\s*\([^,]+,\s*(-?\d+)\s*\)/i
+  );
+  const target = targetMatch
+    ? Number(targetMatch[1] || targetMatch[2])
+    : arr[0];
+  const frames: SimulationFrame[] = [];
+  let left = 0;
+  let right = arr.length - 1;
+  let foundIndex = -1;
 
-  const frames: SimulationFrame[] = [
-    {
-      description: `Initial sorted array of 10 numbers. Searching for target = ${target} across range [0, 9].`,
+  frames.push({
+    description: `Initial sorted array: ${formatInlineArray(
+      arr
+    )}. Searching for ${target}.`,
+    array: [...arr],
+    pointers: { left, right },
+    variables: { left, right, target },
+  });
+
+  while (left <= right) {
+    const mid = left + Math.floor((right - left) / 2);
+    frames.push({
+      description: `Check mid ${mid}: arr[${mid}] = ${arr[mid]} against ${target}.`,
       array: [...arr],
-      pointers: { left: 0, right: 9 },
-      variables: { left: 0, right: 9, target },
-    },
-    {
-      description: "Iteration 1: mid = 0 + (9 - 0) / 2 = 4. arr[4] = 45 < 50. Narrow search range: left = mid + 1 = 5.",
+      pointers: { left, mid, right },
+      highlightIndices: [mid],
+      variables: { left, mid, right, target, value: arr[mid] },
+    });
+    if (arr[mid] === target) {
+      foundIndex = mid;
+      break;
+    }
+    if (arr[mid] < target) left = mid + 1;
+    else right = mid - 1;
+  }
+
+  if (foundIndex < 0) {
+    frames.push({
+      description: `Target ${target} was not found.`,
       array: [...arr],
-      pointers: { left: 5, mid: 4, right: 9 },
-      highlightIndices: [4],
-      variables: { left: 5, right: 9, mid: 4, "arr[mid]": 45, comparison: "45 < 50" },
-    },
-    {
-      description: "Iteration 2: mid = 5 + (9 - 5) / 2 = 7. arr[7] = 75 > 50. Narrow search range: right = mid - 1 = 6.",
-      array: [...arr],
-      pointers: { left: 5, mid: 7, right: 6 },
-      highlightIndices: [7],
-      variables: { left: 5, right: 6, mid: 7, "arr[mid]": 75, comparison: "75 > 50" },
-    },
-    {
-      description: "Iteration 3: mid = 5 + (6 - 5) / 2 = 5. arr[5] = 50 == 50. Target found at index 5!",
-      array: [...arr],
-      pointers: { left: 5, mid: 5, right: 6 },
-      highlightIndices: [5],
-      variables: { left: 5, right: 6, mid: 5, "arr[mid]": 50, resultIndex: 5, status: "Found" },
-    },
-  ];
+      variables: { target, returnIndex: -1 },
+    });
+  }
 
   return {
     success: true,
@@ -1980,7 +2459,11 @@ function simulateBinarySearchWithRange(rawCode: string, clean: string): Executio
       ? "Binary search with safe midpoint calculation found target in O(log n)!"
       : "Calculate mid = left + (right - left) / 2, update left = mid + 1 and right = mid - 1 inside while (left <= right).",
     frames,
-    stdout: `تم العثور على الرقم 50 في الفهرس (Index): 5\n\nProcess returned 0 (0x0)`,
+    stdout: `${
+      foundIndex >= 0
+        ? `تم العثور على الرقم ${target} في الفهرس (Index): ${foundIndex}`
+        : `لم يتم العثور على الرقم ${target}`
+    }\n\nProcess returned 0 (0x0)`,
     exitCode: 0,
   };
 }
@@ -1988,39 +2471,64 @@ function simulateBinarySearchWithRange(rawCode: string, clean: string): Executio
 /**
  * t3_4: Boolean Binary Search
  */
-function simulateBooleanBinarySearch(rawCode: string, clean: string): ExecutionResult {
+function simulateBooleanBinarySearch(
+  rawCode: string,
+  clean: string
+): ExecutionResult {
   const hasCheck = /value\s*==\s*a\[mid\]|a\[mid\]\s*==\s*value/.test(clean);
-  const hasReturns = /return\s+true/i.test(clean) && /return\s+false/i.test(clean);
+  const hasReturns =
+    /return\s+true/i.test(clean) && /return\s+false/i.test(clean);
   const isGoal = hasCheck && hasReturns;
 
-  const arr = [10, 20, 30, 40, 50, 60, 70, 80];
+  const arr = parseFirstNumericArray(clean, [10, 20, 30, 40, 50, 60, 70, 80]);
+  const targetMatches = [
+    ...clean.matchAll(/binary_search\s*\([^,]+,\s*\d+\s*,\s*(-?\d+)\s*\)/g),
+  ].map((match) => Number(match[1]));
+  const targets =
+    targetMatches.length > 0
+      ? targetMatches
+      : [arr[Math.floor(arr.length / 2)]];
+  const firstTarget = targets[0];
+  const firstIndex = arr.indexOf(firstTarget);
+  const secondTarget = targets[1] ?? firstTarget;
+  const secondIndex = arr.indexOf(secondTarget);
 
   const frames: SimulationFrame[] = [
     {
-      description: "Array: [10, 20, 30, 40, 50, 60, 70, 80]. Test 1: binary_search(a, 8, 40).",
+      description: `Array: ${formatInlineArray(
+        arr
+      )}. Test 1: binary_search(..., ${firstTarget}).`,
       array: [...arr],
-      pointers: { low: 0, high: 7 },
-      variables: { target: 40, low: 0, high: 7 },
+      pointers: { low: 0, high: arr.length - 1 },
+      variables: { target: firstTarget, low: 0, high: arr.length - 1 },
     },
     {
-      description: "Search 40: mid = (0 + 7) / 2 = 3. a[3] = 40. Matches target! Returns true.",
+      description: `Search ${firstTarget}: result is ${
+        firstIndex >= 0 ? "true" : "false"
+      }.`,
       array: [...arr],
-      pointers: { match: 3 },
-      highlightIndices: [3],
-      variables: { target: 40, mid: 3, "a[mid]": 40, result: "true" },
+      pointers: firstIndex >= 0 ? { match: firstIndex } : {},
+      highlightIndices: firstIndex >= 0 ? [firstIndex] : [],
+      variables: { target: firstTarget, result: String(firstIndex >= 0) },
     },
     {
-      description: "Test 2: binary_search(a, 8, 99). Searching for target 99.",
+      description: `Test 2: binary_search(..., ${secondTarget}). Searching for target ${secondTarget}.`,
       array: [...arr],
-      pointers: { low: 0, high: 7 },
-      variables: { target: 99, low: 0, high: 7 },
+      pointers: { low: 0, high: arr.length - 1 },
+      variables: { target: secondTarget, low: 0, high: arr.length - 1 },
     },
     {
-      description: "Search 99: Halving range -> mid 3 (40 < 99) -> mid 5 (60 < 99) -> mid 6 (70 < 99) -> mid 7 (80 < 99). low > high. Returns false.",
+      description: `Search ${secondTarget}: result is ${
+        secondIndex >= 0 ? "true" : "false"
+      }.`,
       array: [...arr],
-      pointers: { low: 8, high: 7 },
-      highlightIndices: [7],
-      variables: { target: 99, status: "Not Found", result: "false" },
+      pointers: secondIndex >= 0 ? { match: secondIndex } : {},
+      highlightIndices: secondIndex >= 0 ? [secondIndex] : [],
+      variables: {
+        target: secondTarget,
+        status: secondIndex >= 0 ? "Found" : "Not Found",
+        result: String(secondIndex >= 0),
+      },
     },
   ];
 
@@ -2031,7 +2539,11 @@ function simulateBooleanBinarySearch(rawCode: string, clean: string): ExecutionR
       ? "Boolean binary search implemented with optimal halving!"
       : "Check value == a[mid] to return true, otherwise update low and high pointers and return false when low > high.",
     frames,
-    stdout: `Value 40 found? True\nValue 99 found? False\n\nProcess returned 0 (0x0)`,
+    stdout: `Value ${firstTarget} found? ${
+      firstIndex >= 0
+    }\nValue ${secondTarget} found? ${
+      secondIndex >= 0
+    }\n\nProcess returned 0 (0x0)`,
     exitCode: 0,
   };
 }
@@ -2039,37 +2551,54 @@ function simulateBooleanBinarySearch(rawCode: string, clean: string): ExecutionR
 /**
  * t6_4: Interactive Car Inventory: 5-Feature Management System
  */
-function simulateCarInventorySystem(rawCode: string, clean: string): ExecutionResult {
-  const hasModern = /model\s*>\s*cars\[modern\]\.model|cars\[i\]\.model\s*>\s*cars\[modern\]\.model/.test(clean);
+function simulateCarInventorySystem(
+  rawCode: string,
+  clean: string
+): ExecutionResult {
+  const hasModern =
+    /model\s*>\s*cars\[modern\]\.model|cars\[i\]\.model\s*>\s*cars\[modern\]\.model/.test(
+      clean
+    );
   const hasSearch = /searchName|cars\[i\]\.name/.test(clean);
-  const hasLengthFilter = /length\(\)\s*>\s*3|cars\[i\]\.name\.length\(\)/.test(clean);
+  const hasLengthFilter = /length\(\)\s*>\s*3|cars\[i\]\.name\.length\(\)/.test(
+    clean
+  );
   const isGoal = hasModern && hasSearch && hasLengthFilter;
 
   const carModels = [2020, 2022, 2024];
 
   const frames: SimulationFrame[] = [
     {
-      description: "Initialized 3 Car objects: [0] Corolla (2020), [1] Camry (2022), [2] BMW (2024).",
+      description:
+        "Initialized 3 Car objects: [0] Corolla (2020), [1] Camry (2022), [2] BMW (2024).",
       array: [...carModels],
       pointers: { "cars[0]": 0, "cars[1]": 1, "cars[2]": 2 },
-      variables: { count: 3, "cars[0]": "Corolla 2020", "cars[1]": "Camry 2022", "cars[2]": "BMW 2024" },
+      variables: {
+        count: 3,
+        "cars[0]": "Corolla 2020",
+        "cars[1]": "Camry 2022",
+        "cars[2]": "BMW 2024",
+      },
     },
     {
-      description: "Feature 2: Finding most modern car. Comparing model years -> 2024 is maximum.",
+      description:
+        "Feature 2: Finding most modern car. Comparing model years -> 2024 is maximum.",
       array: [...carModels],
       pointers: { modern: 2 },
       highlightIndices: [2],
       variables: { mostModern: "BMW", maxModel: 2024 },
     },
     {
-      description: "Feature 3: Linear search for 'BMW'. Found at index 2 (Model: 2024).",
+      description:
+        "Feature 3: Linear search for 'BMW'. Found at index 2 (Model: 2024).",
       array: [...carModels],
       pointers: { found: 2 },
       highlightIndices: [2],
       variables: { searchTarget: "BMW", foundIndex: 2, status: "Found" },
     },
     {
-      description: "Feature 4: Filtering names with length > 3 characters: Corolla (7), Camry (5).",
+      description:
+        "Feature 4: Filtering names with length > 3 characters: Corolla (7), Camry (5).",
       array: [...carModels],
       pointers: { match1: 0, match2: 1 },
       highlightIndices: [0, 1],
@@ -2092,8 +2621,14 @@ function simulateCarInventorySystem(rawCode: string, clean: string): ExecutionRe
 /**
  * t7_3: Stack Fundamentals (Class & Dynamic Operations)
  */
-function simulateStackFundamentals(rawCode: string, clean: string): ExecutionResult {
-  const hasPush = /stack\[\+\+top\]\s*=\s*value|\+\+top;?\s*stack\[top\]\s*=\s*value|top\+\+;?\s*stack\[top\]\s*=\s*value/.test(clean);
+function simulateStackFundamentals(
+  rawCode: string,
+  clean: string
+): ExecutionResult {
+  const hasPush =
+    /stack\[\+\+top\]\s*=\s*value|\+\+top;?\s*stack\[top\]\s*=\s*value|top\+\+;?\s*stack\[top\]\s*=\s*value/.test(
+      clean
+    );
   const hasPop = /stack\[top--\]|top--;?\s*return/i.test(clean);
   const isGoal = hasPush && hasPop;
 
@@ -2118,7 +2653,8 @@ function simulateStackFundamentals(rawCode: string, clean: string): ExecutionRes
       variables: { peekVal: 30, top: 2 },
     },
     {
-      description: "pop(): Removed 30. top decrements to 1. New top element is 20.",
+      description:
+        "pop(): Removed 30. top decrements to 1. New top element is 20.",
       array: [10, 20, null, null, null],
       pointers: { top: 1 },
       highlightIndices: [1],
@@ -2141,34 +2677,42 @@ function simulateStackFundamentals(rawCode: string, clean: string): ExecutionRes
 /**
  * t7_4: Palindrome Verification Using a Stack
  */
-function simulatePalindromeStack(rawCode: string, clean: string): ExecutionResult {
+function simulatePalindromeStack(
+  rawCode: string,
+  clean: string
+): ExecutionResult {
   const hasPushLoop = /push\s*\(\s*str\[i\]\s*\)/.test(clean);
-  const hasPopLoop = /reverse\s*\+=\s*pop\(\)|reverse\s*\+=\s*s\.pop\(\)|s\.pop\(\)/.test(clean);
+  const hasPopLoop =
+    /reverse\s*\+=\s*pop\(\)|reverse\s*\+=\s*s\.pop\(\)|s\.pop\(\)/.test(clean);
   const hasCheck = /str\s*==\s*reverse/.test(clean);
   const isGoal = hasPushLoop && hasCheck;
 
-  const chars = ['r', 'a', 'd', 'a', 'r'];
+  const chars = ["r", "a", "d", "a", "r"];
 
   const frames: SimulationFrame[] = [
     {
-      description: "Input string: 'radar'. Testing for palindrome with LIFO stack.",
+      description:
+        "Input string: 'radar'. Testing for palindrome with LIFO stack.",
       array: [null, null, null, null, null],
       variables: { input: "radar", length: 5 },
     },
     {
-      description: "Pushed all characters of 'radar' onto stack. top = 4 ('r').",
+      description:
+        "Pushed all characters of 'radar' onto stack. top = 4 ('r').",
       array: [...chars],
       pointers: { top: 4 },
       highlightIndices: [0, 1, 2, 3, 4],
-      variables: { stackContent: "r, a, d, a, r", topChar: 'r' },
+      variables: { stackContent: "r, a, d, a, r", topChar: "r" },
     },
     {
-      description: "Popping characters in LIFO order builds reverse string: 'r' -> 'a' -> 'd' -> 'a' -> 'r'.",
+      description:
+        "Popping characters in LIFO order builds reverse string: 'r' -> 'a' -> 'd' -> 'a' -> 'r'.",
       array: [null, null, null, null, null],
       variables: { original: "radar", reversed: "radar" },
     },
     {
-      description: "Comparison: 'radar' == 'radar' -> true! The string is a Palindrome.",
+      description:
+        "Comparison: 'radar' == 'radar' -> true! The string is a Palindrome.",
       array: [...chars],
       variables: { isPalindrome: "true", result: "The string is Palindrome" },
     },
@@ -2189,9 +2733,16 @@ function simulatePalindromeStack(rawCode: string, clean: string): ExecutionResul
 /**
  * t7_5: Delimiter & Parentheses Matching Using a Stack
  */
-function simulateDelimiterMatching(rawCode: string, clean: string): ExecutionResult {
-  const hasPushOpen = /push\s*\(\s*exp\[i\]\s*\)|push\s*\(\s*ch\s*\)/.test(clean);
-  const hasMatchCheck = /isMatching|\(\s*open\s*==\s*'\(|c\s*==\s*'\)'/.test(clean);
+function simulateDelimiterMatching(
+  rawCode: string,
+  clean: string
+): ExecutionResult {
+  const hasPushOpen = /push\s*\(\s*exp\[i\]\s*\)|push\s*\(\s*ch\s*\)/.test(
+    clean
+  );
+  const hasMatchCheck = /isMatching|\(\s*open\s*==\s*'\(|c\s*==\s*'\)'/.test(
+    clean
+  );
   const hasEmptyCheck = /isEmpty\(\)|top\s*==\s*-1/.test(clean);
   const isGoal = hasPushOpen && (hasMatchCheck || hasEmptyCheck);
 
@@ -2202,23 +2753,29 @@ function simulateDelimiterMatching(rawCode: string, clean: string): ExecutionRes
       variables: { expression: "{[()]}", top: -1 },
     },
     {
-      description: "Pushed opening delimiters: '{', '[', '('. Stack top = 2 ('(').",
-      array: ['{', '[', '(', null, null],
+      description:
+        "Pushed opening delimiters: '{', '[', '('. Stack top = 2 ('(').",
+      array: ["{", "[", "(", null, null],
       pointers: { top: 2 },
       highlightIndices: [0, 1, 2],
-      variables: { top: 2, currentTop: '(' },
+      variables: { top: 2, currentTop: "(" },
     },
     {
       description: "Encountered ')': Matches stack top '('. Popped '('.",
-      array: ['{', '[', null, null, null],
+      array: ["{", "[", null, null, null],
       pointers: { top: 1 },
       highlightIndices: [1],
-      variables: { matched: "()", top: 1, currentTop: '[' },
+      variables: { matched: "()", top: 1, currentTop: "[" },
     },
     {
-      description: "Encountered ']': Matches '['. Popped '['. Encountered '}': Matches '{'. Popped '{'.",
+      description:
+        "Encountered ']': Matches '['. Popped '['. Encountered '}': Matches '{'. Popped '{'.",
       array: [null, null, null, null, null],
-      variables: { top: -1, isStackEmpty: "true", result: "Delimiters are matched" },
+      variables: {
+        top: -1,
+        isStackEmpty: "true",
+        result: "Delimiters are matched",
+      },
     },
   ];
 
@@ -2237,29 +2794,39 @@ function simulateDelimiterMatching(rawCode: string, clean: string): ExecutionRes
 /**
  * t7_6: Reversing a Stack Using Another Stack
  */
-function simulateTwoStackReversal(rawCode: string, clean: string): ExecutionResult {
-  const hasTransferLoop = /while\s*\(\s*s1\.top\s*!=\s*-1\s*\)|while\s*\(\s*top1\s*!=\s*-1\s*\)|s2\.push\s*\(\s*s1\.pop\s*\(\s*\)\s*\)|push2\s*\(\s*pop1\s*\(\s*\)\s*\)/.test(clean);
+function simulateTwoStackReversal(
+  rawCode: string,
+  clean: string
+): ExecutionResult {
+  const hasTransferLoop =
+    /while\s*\(\s*s1\.top\s*!=\s*-1\s*\)|while\s*\(\s*top1\s*!=\s*-1\s*\)|s2\.push\s*\(\s*s1\.pop\s*\(\s*\)\s*\)|push2\s*\(\s*pop1\s*\(\s*\)\s*\)/.test(
+      clean
+    );
   const isGoal = hasTransferLoop;
 
-  const stackOriginal = [10, 20, 30, 40, 50];
+  const stackOriginal = parseFirstNumericArray(clean, [10, 20, 30, 40, 50]);
+  const reversedStack = [...stackOriginal].reverse();
 
   const frames: SimulationFrame[] = [
     {
-      description: "Stack 1 filled with [10, 20, 30, 40, 50]. top1 = 4. Stack 2 is empty.",
+      description:
+        "Stack 1 filled with [10, 20, 30, 40, 50]. top1 = 4. Stack 2 is empty.",
       array: [...stackOriginal],
       pointers: { top1: 4 },
       variables: { top1: 4, top2: -1 },
     },
     {
-      description: "Transferred elements: pop1() -> push2(). Stack 2 becomes [50, 40, 30, 20, 10].",
-      array: [50, 40, 30, 20, 10],
+      description:
+        "Transferred elements: pop1() -> push2(). Stack 2 becomes [50, 40, 30, 20, 10].",
+      array: [...reversedStack],
       pointers: { top2: 4 },
       highlightIndices: [0, 1, 2, 3, 4],
       variables: { top1: -1, top2: 4, "stack2 top": 10 },
     },
     {
-      description: "Popping from Stack 2 produces the original bottom-to-top sequence: 10, 20, 30, 40, 50!",
-      array: [50, 40, 30, 20, 10],
+      description:
+        "Popping from Stack 2 produces the original bottom-to-top sequence: 10, 20, 30, 40, 50!",
+      array: [...reversedStack],
       variables: { reversedOutput: "10 20 30 40 50", status: "Completed" },
     },
   ];
@@ -2271,7 +2838,9 @@ function simulateTwoStackReversal(rawCode: string, clean: string): ExecutionResu
       ? "Stack reversed using auxiliary stack successfully!"
       : "Transfer elements while top1 != -1 by executing push2(pop1()), then display stack2.",
     frames,
-    stdout: `Reversed Stack:\n10 20 30 40 50 \n\nProcess returned 0 (0x0)`,
+    stdout: `Reversed Stack:\n${stackOriginal.join(
+      " "
+    )} \n\nProcess returned 0 (0x0)`,
     exitCode: 0,
   };
 }
@@ -2279,15 +2848,20 @@ function simulateTwoStackReversal(rawCode: string, clean: string): ExecutionResu
 /**
  * t7_7: Infix to Prefix Conversion Using a Stack
  */
-function simulateInfixToPrefix(rawCode: string, clean: string): ExecutionResult {
+function simulateInfixToPrefix(
+  rawCode: string,
+  clean: string
+): ExecutionResult {
   const hasReverse = /reverse\s*\(\s*exp\.begin\(\)/.test(clean);
-  const hasSwap = /exp\[i\]\s*==\s*'\('/.test(clean) && /exp\[i\]\s*==\s*'\)'/.test(clean);
+  const hasSwap =
+    /exp\[i\]\s*==\s*'\('/.test(clean) && /exp\[i\]\s*==\s*'\)'/.test(clean);
   const hasPostfix = /infixToPostfix/.test(clean);
   const isGoal = hasReverse && (hasSwap || hasPostfix);
 
   const frames: SimulationFrame[] = [
     {
-      description: "Input Infix: (A+B)*(C-D). Step 1: Reverse string -> )D-C(*)B+A(",
+      description:
+        "Input Infix: (A+B)*(C-D). Step 1: Reverse string -> )D-C(*)B+A(",
       variables: { step: "Reverse", expression: ")D-C(*)B+A(" },
     },
     {
@@ -2319,8 +2893,14 @@ function simulateInfixToPrefix(rawCode: string, clean: string): ExecutionResult 
 /**
  * t9_4: Circular Queue with do-while Traversal & Search
  */
-function simulateCircularQueueClass(rawCode: string, clean: string): ExecutionResult {
-  const hasModulo = /\(rear\s*\+\s*1\)\s*%\s*SIZE\s*==\s*front|\(i\s*\+\s*1\)\s*%\s*SIZE/.test(clean);
+function simulateCircularQueueClass(
+  rawCode: string,
+  clean: string
+): ExecutionResult {
+  const hasModulo =
+    /\(rear\s*\+\s*1\)\s*%\s*SIZE\s*==\s*front|\(i\s*\+\s*1\)\s*%\s*SIZE/.test(
+      clean
+    );
   const hasDoWhile = /do\s*\{.*?\}\s*while/s.test(clean);
   const hasSearch = /search\s*\(/.test(clean);
   const isGoal = hasModulo && hasDoWhile && hasSearch;
@@ -2329,26 +2909,30 @@ function simulateCircularQueueClass(rawCode: string, clean: string): ExecutionRe
 
   const frames: SimulationFrame[] = [
     {
-      description: "Enqueued [10, 20, 30, 40] into CircularQueue of SIZE 5. front = 0, rear = 3.",
+      description:
+        "Enqueued [10, 20, 30, 40] into CircularQueue of SIZE 5. front = 0, rear = 3.",
       array: [...queueData],
       pointers: { front: 0, rear: 3 },
       variables: { front: 0, rear: 3, count: 4 },
     },
     {
-      description: "display(): Traversing indices 0, 1, 2, 3 via do-while loop -> [10, 20, 30, 40].",
+      description:
+        "display(): Traversing indices 0, 1, 2, 3 via do-while loop -> [10, 20, 30, 40].",
       array: [...queueData],
       highlightIndices: [0, 1, 2, 3],
       variables: { displayed: "10 20 30 40" },
     },
     {
-      description: "search(30): Checking i = 0 (10), i = 1 (20), i = 2 (30 == 30). Match found at position 3 (index 2)!",
+      description:
+        "search(30): Checking i = 0 (10), i = 1 (20), i = 2 (30 == 30). Match found at position 3 (index 2)!",
       array: [...queueData],
       pointers: { match: 2 },
       highlightIndices: [2],
       variables: { target: 30, foundAtPosition: 3, index: 2 },
     },
     {
-      description: "search(99): Traversing until i == (rear + 1) % 5 = 4. 99 not found in queue.",
+      description:
+        "search(99): Traversing until i == (rear + 1) % 5 = 4. 99 not found in queue.",
       array: [...queueData],
       variables: { target: 99, status: "Not Found" },
     },
@@ -2369,13 +2953,20 @@ function simulateCircularQueueClass(rawCode: string, clean: string): ExecutionRe
 /**
  * t9_5: Reversing a Queue Using STL Queue & Stack
  */
-function simulateQueueReversalSTL(rawCode: string, clean: string): ExecutionResult {
-  const hasQueueToStack = /s\.push\s*\(\s*q\.front\s*\(\s*\)\s*\)/.test(clean) && /q\.pop\s*\(\s*\)/.test(clean);
-  const hasStackToQueue = /q\.push\s*\(\s*s\.top\s*\(\s*\)\s*\)/.test(clean) && /s\.pop\s*\(\s*\)/.test(clean);
+function simulateQueueReversalSTL(
+  rawCode: string,
+  clean: string
+): ExecutionResult {
+  const hasQueueToStack =
+    /s\.push\s*\(\s*q\.front\s*\(\s*\)\s*\)/.test(clean) &&
+    /q\.pop\s*\(\s*\)/.test(clean);
+  const hasStackToQueue =
+    /q\.push\s*\(\s*s\.top\s*\(\s*\)\s*\)/.test(clean) &&
+    /s\.pop\s*\(\s*\)/.test(clean);
   const isGoal = hasQueueToStack && hasStackToQueue;
 
-  const originalQueue = [10, 20, 30, 40, 50];
-  const reversedQueue = [50, 40, 30, 20, 10];
+  const originalQueue = parseFirstNumericArray(clean, [10, 20, 30, 40, 50]);
+  const reversedQueue = [...originalQueue].reverse();
 
   const frames: SimulationFrame[] = [
     {
@@ -2385,20 +2976,23 @@ function simulateQueueReversalSTL(rawCode: string, clean: string): ExecutionResu
       variables: { "q.front()": 10, "q.back()": 50, stackSize: 0 },
     },
     {
-      description: "Step 1: Pushed all queue elements onto stack. Stack top-to-bottom: [50, 40, 30, 20, 10].",
+      description:
+        "Step 1: Pushed all queue elements onto stack. Stack top-to-bottom: [50, 40, 30, 20, 10].",
       array: [...reversedQueue],
       pointers: { "s.top()": 0 },
       variables: { "s.top()": 50, queueSize: 0 },
     },
     {
-      description: "Step 2: Popped each element from stack and enqueued back into queue.",
+      description:
+        "Step 2: Popped each element from stack and enqueued back into queue.",
       array: [...reversedQueue],
       pointers: { front: 0, rear: 4 },
       highlightIndices: [0, 1, 2, 3, 4],
       variables: { "reversed front": 50, "reversed back": 10 },
     },
     {
-      description: "Result: Queue is completely reversed -> [50, 40, 30, 20, 10].",
+      description:
+        "Result: Queue is completely reversed -> [50, 40, 30, 20, 10].",
       array: [...reversedQueue],
       variables: { output: "50 40 30 20 10", status: "Reversal Complete" },
     },
@@ -2411,7 +3005,11 @@ function simulateQueueReversalSTL(rawCode: string, clean: string): ExecutionResu
       ? "Queue reversed using STL queue and stack efficiently in O(n)!"
       : "Transfer elements while !q.empty() by pushing q.front() to s and popping q, then transfer back from s.top() to q.",
     frames,
-    stdout: `Original Queue elements:\n10 20 30 40 50 \nReversed Queue elements:\n50 40 30 20 10 \n\nProcess returned 0 (0x0)`,
+    stdout: `Original Queue elements:\n${originalQueue.join(
+      " "
+    )} \nReversed Queue elements:\n${reversedQueue.join(
+      " "
+    )} \n\nProcess returned 0 (0x0)`,
     exitCode: 0,
   };
 }
@@ -2420,17 +3018,26 @@ function simulateQueueReversalSTL(rawCode: string, clean: string): ExecutionResu
  * Task 1_3: Array Output Function (printarray)
  */
 function simulatePrintArray(rawCode: string, clean: string): ExecutionResult {
-  const isGoal = clean.includes('arra[i]') &&
-    (clean.includes('cout') || clean.includes('printf')) &&
-    (clean.includes('size') || clean.includes('5'));
+  const isGoal =
+    clean.includes("arra[i]") &&
+    (clean.includes("cout") || clean.includes("printf")) &&
+    (clean.includes("size") || clean.includes("5"));
 
-  const array = [10, 20, 30, 40, 50];
+  const array = parseFirstArrayInitializer(clean)?.values ?? [
+    10, 20, 30, 40, 50,
+  ];
   const frames: SimulationFrame[] = array.map((val, idx) => ({
-    description: `Traversing index ${idx}: printarray outputs 'the element ${idx + 1} = ${val}'.`,
+    description: `Traversing index ${idx}: printarray outputs 'the element ${
+      idx + 1
+    } = ${val}'.`,
     array: [...array],
     pointers: { i: idx },
     highlightIndices: [idx],
-    variables: { i: idx, "arra[i]": val, output: `the element ${idx + 1} = ${val}` },
+    variables: {
+      i: idx,
+      "arra[i]": val,
+      output: `the element ${idx + 1} = ${val}`,
+    },
   }));
 
   return {
@@ -2440,7 +3047,10 @@ function simulatePrintArray(rawCode: string, clean: string): ExecutionResult {
       ? "Array successfully traversed and formatted via printarray in O(n)!"
       : "Loop through each index up to size and print 'the element ' << i + 1 << ' = ' << arra[i] << endl.",
     frames,
-    stdout: `--- طباعة عناصر المصفوفة باستخدام الدالة ---\nthe element 1 = 10\nthe element 2 = 20\nthe element 3 = 30\nthe element 4 = 40\nthe element 5 = 50\n\nProcess returned 0 (0x0)`,
+    stdout: `--- طباعة عناصر المصفوفة باستخدام الدالة ---\n${formatArrayOutput(
+      "the element",
+      array
+    ).join("\n")}\n\nProcess returned 0 (0x0)`,
     exitCode: 0,
   };
 }
@@ -2449,32 +3059,42 @@ function simulatePrintArray(rawCode: string, clean: string): ExecutionResult {
  * Task 1_4: In-Place Array Addition (addelement)
  */
 function simulateAddElement(rawCode: string, clean: string): ExecutionResult {
-  const isGoal = /arra\[i\]\s*(\+=|=.*?\+)\s*ele/.test(clean) || clean.includes('arra[i] += ele');
+  const isGoal =
+    /arra\[i\]\s*(\+=|=.*?\+)\s*ele/.test(clean) ||
+    clean.includes("arra[i] += ele");
 
-  const before = [10, 20, 30, 40, 50];
-  const after = [17, 27, 37, 47, 57];
+  const before = parseFirstArrayInitializer(clean)?.values ?? [
+    10, 20, 30, 40, 50,
+  ];
+  const eleMatch =
+    clean.match(/addelement\s*\([^,]+,\s*(-?\d+)\s*\)/) ||
+    clean.match(/\bele\s*=\s*(-?\d+)/);
+  const ele = eleMatch ? parseInt(eleMatch[1], 10) : 7;
+  const after = before.map((value) => value + ele);
 
   const frames: SimulationFrame[] = [
     {
-      description: "Initial array state before addition: [10, 20, 30, 40, 50].",
+      description: `Initial array state before addition: [${before.join(
+        ", "
+      )}].`,
       array: [...before],
-      variables: { status: "Before addition", ele: 7 },
+      variables: { status: "Before addition", ele },
     },
     ...after.map((val, idx) => {
       const intermediate = [...before];
       for (let j = 0; j <= idx; j++) intermediate[j] = after[j];
       return {
-        description: `addelement: Adding 7 to arra[${idx}] -> ${intermediate[idx]}.`,
+        description: `addelement: Adding ${ele} to arra[${idx}] -> ${intermediate[idx]}.`,
         array: intermediate,
         pointers: { i: idx },
         highlightIndices: [idx],
-        variables: { i: idx, ele: 7, "arra[i]": intermediate[idx] },
+        variables: { i: idx, ele, "arra[i]": intermediate[idx] },
       };
     }),
     {
-      description: "Final array state after addition: [17, 27, 37, 47, 57].",
+      description: `Final array state after addition: [${after.join(", ")}].`,
       array: [...after],
-      variables: { status: "Addition complete" },
+      variables: { status: "Addition complete", ele },
     },
   ];
 
@@ -2485,7 +3105,15 @@ function simulateAddElement(rawCode: string, clean: string): ExecutionResult {
       ? "Array modified in-place using addelement(arra, 7) in O(n)!"
       : "Iterate through each element in arra and increment it by ele (arra[i] += ele).",
     frames,
-    stdout: `--- عناصر المصفوفة قبل الإضافة ---\nthe element 1 = 10\nthe element 2 = 20\nthe element 3 = 30\nthe element 4 = 40\nthe element 5 = 50\n\n--- جاري إضافة الرقم 7 لجميع العناصر... ---\n\n--- عناصر المصفوفة بعد الإضافة ---\nthe element 1 = 17\nthe element 2 = 27\nthe element 3 = 37\nthe element 4 = 47\nthe element 5 = 57\n\nProcess returned 0 (0x0)`,
+    stdout: `--- عناصر المصفوفة قبل الإضافة ---\n${formatArrayOutput(
+      "the element",
+      before
+    ).join(
+      "\n"
+    )}\n\n--- جاري إضافة الرقم ${ele} لجميع العناصر... ---\n\n--- عناصر المصفوفة بعد الإضافة ---\n${formatArrayOutput(
+      "the element",
+      after
+    ).join("\n")}\n\nProcess returned 0 (0x0)`,
     exitCode: 0,
   };
 }
@@ -2494,14 +3122,22 @@ function simulateAddElement(rawCode: string, clean: string): ExecutionResult {
  * Task 1_5: Array Doubling Function (multiarray)
  */
 function simulateMultiArray(rawCode: string, clean: string): ExecutionResult {
-  const isGoal = /arra\[i\]\s*(\*=|==.*?\*)\s*2/.test(clean) || clean.includes('arra[i] *= 2') || clean.includes('arra[i] = arra[i] * 2');
+  const multiplierMatch = clean.match(
+    /arra\s*\[\s*i\s*\]\s*(?:\*=\s*|=\s*arra\s*\[\s*i\s*\]\s*\*\s*)(-?\d+(?:\.\d+)?)/
+  );
+  const multiplier = multiplierMatch ? Number(multiplierMatch[1]) : 2;
+  const isGoal = multiplierMatch !== null;
 
-  const before = [5, 10, 15, 20, 25];
-  const after = [10, 20, 30, 40, 50];
+  const before = parseFirstArrayInitializer(clean)?.values ?? [
+    5, 10, 15, 20, 25,
+  ];
+  const after = before.map((value) => value * multiplier);
 
   const frames: SimulationFrame[] = [
     {
-      description: "Initial array state before doubling: [5, 10, 15, 20, 25].",
+      description: `Initial array state before doubling: [${before.join(
+        ", "
+      )}].`,
       array: [...before],
       variables: { status: "Before doubling" },
     },
@@ -2509,17 +3145,19 @@ function simulateMultiArray(rawCode: string, clean: string): ExecutionResult {
       const intermediate = [...before];
       for (let j = 0; j <= idx; j++) intermediate[j] = after[j];
       return {
-        description: `multiarray: Doubling arra[${idx}] -> ${intermediate[idx]}.`,
+        description: `multiarray: arra[${idx}] multiplied by ${multiplier} -> ${intermediate[idx]}.`,
         array: intermediate,
         pointers: { i: idx },
         highlightIndices: [idx],
-        variables: { i: idx, multiplier: 2, "arra[i]": intermediate[idx] },
+        variables: { i: idx, multiplier, "arra[i]": intermediate[idx] },
       };
     }),
     {
-      description: "Final array state after doubling: [10, 20, 30, 40, 50].",
+      description: `Final array state after multiplication by ${multiplier}: [${after.join(
+        ", "
+      )}].`,
       array: [...after],
-      variables: { status: "Doubling complete" },
+      variables: { status: `Multiplication by ${multiplier} complete` },
     },
   ];
 
@@ -2527,10 +3165,18 @@ function simulateMultiArray(rawCode: string, clean: string): ExecutionResult {
     success: true,
     isTaskGoalAchieved: isGoal,
     goalFeedback: isGoal
-      ? "Array elements doubled in-place using multiarray in O(n)!"
-      : "Traverse each element in arra and multiply by 2 (arra[i] *= 2).",
+      ? `Array elements multiplied in-place by ${multiplier} using multiarray in O(n)!`
+      : "Traverse each element in arra and multiply it by the chosen multiplier.",
     frames,
-    stdout: `--- عناصر المصفوفة قبل المضاعفة ---\nthe element 1 = 5\nthe element 2 = 10\nthe element 3 = 15\nthe element 4 = 20\nthe element 5 = 25\n\n--- جاري مضاعفة جميع العناصر (الضرب في 2)... ---\n\n--- عناصر المصفوفة بعد المضاعفة ---\nthe element 1 = 10\nthe element 2 = 20\nthe element 3 = 30\nthe element 4 = 40\nthe element 5 = 50\n\nProcess returned 0 (0x0)`,
+    stdout: `--- عناصر المصفوفة قبل الضرب ---\n${formatArrayOutput(
+      "the element",
+      before
+    ).join(
+      "\n"
+    )}\n\n--- جاري ضرب جميع العناصر في ${multiplier}... ---\n\n--- عناصر المصفوفة بعد الضرب ---\n${formatArrayOutput(
+      "the element",
+      after
+    ).join("\n")}\n\nProcess returned 0 (0x0)`,
     exitCode: 0,
   };
 }
@@ -2538,37 +3184,39 @@ function simulateMultiArray(rawCode: string, clean: string): ExecutionResult {
 /**
  * Task 3_5: Positional Linear Search with Global Status Flag (positionsearch)
  */
-function simulatePositionSearch(rawCode: string, clean: string): ExecutionResult {
-  const isGoal = clean.includes('arra[i] == ele') &&
-    (clean.includes('x = true') || clean.includes('x=true')) &&
-    clean.includes('return i');
+function simulatePositionSearch(
+  rawCode: string,
+  clean: string
+): ExecutionResult {
+  const isGoal =
+    clean.includes("arra[i] == ele") &&
+    (clean.includes("x = true") || clean.includes("x=true")) &&
+    clean.includes("return i");
 
-  const array = [10, 20, 30, 40, 50];
-  const target = 30;
+  const array = parseFirstNumericArray(clean, [10, 20, 30, 40, 50]);
+  const targetMatch = clean.match(/\bele\s*=\s*(-?\d+)/);
+  const target = targetMatch ? Number(targetMatch[1]) : array[2];
+  const foundIndex = array.indexOf(target);
+  const inspected = foundIndex >= 0 ? array.slice(0, foundIndex + 1) : array;
 
-  const frames: SimulationFrame[] = [
-    {
-      description: "Search started: Looking for 30 in [10, 20, 30, 40, 50]. Global flag x = false.",
-      array: [...array],
-      pointers: { i: 0 },
-      highlightIndices: [0],
-      variables: { i: 0, target, "arra[0]": 10, flag_x: "false", match: "false" },
+  const frames: SimulationFrame[] = inspected.map((value, index) => ({
+    description: `Index ${index}: arra[${index}] = ${value} ${
+      value === target ? "==" : "!="
+    } ${target}${
+      value === target ? ". Target found." : ". Continuing search."
+    }`,
+    array: [...array],
+    pointers: { i: index },
+    highlightIndices: [index],
+    variables: {
+      i: index,
+      target,
+      [`arra[${index}]`]: value,
+      flag_x: value === target ? "true" : "false",
+      match: String(value === target),
+      ...(value === target ? { returnIndex: index } : {}),
     },
-    {
-      description: "Index 1: arra[1] = 20 != 30. Incrementing search index.",
-      array: [...array],
-      pointers: { i: 1 },
-      highlightIndices: [1],
-      variables: { i: 1, target, "arra[1]": 20, flag_x: "false", match: "false" },
-    },
-    {
-      description: "Index 2: arra[2] = 30 == 30! Target found. Setting global flag x = true, returning index 2.",
-      array: [...array],
-      pointers: { i: 2 },
-      highlightIndices: [2],
-      variables: { i: 2, target, "arra[2]": 30, flag_x: "true", match: "true", returnIndex: 2 },
-    },
-  ];
+  }));
 
   return {
     success: true,
@@ -2577,7 +3225,13 @@ function simulatePositionSearch(rawCode: string, clean: string): ExecutionResult
       ? "Position search with global flag 'x' completed successfully in O(n)!"
       : "Check if arra[i] == ele, set x = true, and return i immediately when found.",
     frames,
-    stdout: `--- برنامج البحث عن موقع العنصر ---\nعناصر المصفوفة هي: 10, 20, 30, 40, 50 (في المواقع من 0 إلى 4)\n\nجاري البحث عن الرقم: 30...\nالنتيجة: الرقم 30 موجود في الفهرس رقم 2\n\n\nProcess returned 0 (0x0)`,
+    stdout: `--- برنامج البحث عن موقع العنصر ---\nعناصر المصفوفة هي: ${array.join(
+      ", "
+    )}\n\nجاري البحث عن الرقم: ${target}...\nالنتيجة: ${
+      foundIndex >= 0
+        ? `الرقم ${target} موجود في الفهرس رقم ${foundIndex}`
+        : `الرقم ${target} غير موجود`
+    }\n\nProcess returned 0 (0x0)`,
     exitCode: 0,
   };
 }
@@ -2585,30 +3239,52 @@ function simulatePositionSearch(rawCode: string, clean: string): ExecutionResult
 /**
  * Task 7_8: STL Stack Palindrome Checker (std::stack<char>)
  */
-function simulateSTLStackPalindrome(rawCode: string, clean: string): ExecutionResult {
-  const isGoal = (clean.includes('s.push') || clean.includes('push')) &&
-    (clean.includes('s.pop') || clean.includes('pop')) &&
-    (clean.includes('s.top') || clean.includes('top'));
+function simulateSTLStackPalindrome(
+  rawCode: string,
+  clean: string
+): ExecutionResult {
+  const isGoal =
+    (clean.includes("s.push") || clean.includes("push")) &&
+    (clean.includes("s.pop") || clean.includes("pop")) &&
+    (clean.includes("s.top") || clean.includes("top"));
 
-  const word = "noon";
-  const chars = word.split('');
+  const word = parseFirstQuotedValue(clean);
+  if (word === null) {
+    return {
+      success: false,
+      isTaskGoalAchieved: false,
+      goalFeedback: "No string literal was found to execute.",
+      frames: [],
+      stdout: "No real input string was found in the code.",
+      exitCode: 1,
+    };
+  }
+  const chars = word.split("");
+  const reversed = [...chars].reverse().join("");
+  const isPalindrome = word === reversed;
 
   const frames: SimulationFrame[] = [
     {
       description: `Input string: '${word}'. Pushing each character to std::stack<char>.`,
-      array: ['n', 'o', 'o', 'n', null],
+      array: ["n", "o", "o", "n", null],
       pointers: { top: 3 },
       highlightIndices: [0, 1, 2, 3],
-      variables: { input: word, stackSize: 4, topChar: 'n' },
+      variables: { input: word, stackSize: 4, topChar: "n" },
     },
     {
-      description: "Popping characters in LIFO order from stack into 'rev': 'n' -> 'o' -> 'o' -> 'n'.",
+      description:
+        "Popping characters in LIFO order from stack into 'rev': 'n' -> 'o' -> 'o' -> 'n'.",
       array: [null, null, null, null, null],
-      variables: { original: word, reversed: word, "s.empty()": "true" },
+      variables: { original: word, reversed, "s.empty()": "true" },
     },
     {
-      description: "Comparison: str ('noon') == rev ('noon') -> Output: 'Palindrome'.",
-      variables: { result: "Palindrome", matches: "true" },
+      description: `Comparison: str ('${word}') == rev ('${reversed}') -> ${
+        isPalindrome ? "Palindrome" : "Not Palindrome"
+      }.`,
+      variables: {
+        result: isPalindrome ? "Palindrome" : "Not Palindrome",
+        matches: String(isPalindrome),
+      },
     },
   ];
 
@@ -2619,7 +3295,9 @@ function simulateSTLStackPalindrome(rawCode: string, clean: string): ExecutionRe
       ? "Palindrome verification using std::stack<char> executed in linear O(n) time!"
       : "Push string characters onto stack s, then pop into rev while !s.empty(), and compare str == rev.",
     frames,
-    stdout: `Enter string: noon\nPalindrome\nProcess returned 0 (0x0)`,
+    stdout: `Enter string: ${word}\n${
+      isPalindrome ? "Palindrome" : "Not Palindrome"
+    }\nProcess returned 0 (0x0)`,
     exitCode: 0,
   };
 }
@@ -2627,53 +3305,44 @@ function simulateSTLStackPalindrome(rawCode: string, clean: string): ExecutionRe
 /**
  * Task 7_9: Postfix Expression Evaluation using STL Stack
  */
-function simulatePostfixEvaluation(rawCode: string, clean: string): ExecutionResult {
-  const isGoal = clean.includes('isdigit') &&
-    clean.includes('s.push') &&
-    clean.includes('s.pop') &&
-    clean.includes('switch');
+function simulatePostfixEvaluation(
+  rawCode: string,
+  clean: string
+): ExecutionResult {
+  const isGoal =
+    clean.includes("isdigit") &&
+    clean.includes("s.push") &&
+    clean.includes("s.pop") &&
+    clean.includes("switch");
+
+  const expressionMatch = clean.match(
+    /(?:string|char\s+\w+\s*\[\s*\d*\s*\])\s+\w+\s*=\s*"([0-9+\-*/%\s]+)"/
+  );
+  const expression = expressionMatch?.[1]?.trim();
+  const result = expression ? evaluatePostfixExpression(expression) : null;
+  if (!expression || result === null) {
+    return {
+      success: false,
+      isTaskGoalAchieved: false,
+      goalFeedback: "No valid postfix expression was found to execute.",
+      frames: [],
+      stdout: "No real postfix input was found in the code.",
+      exitCode: 1,
+    };
+  }
 
   const frames: SimulationFrame[] = [
     {
-      description: "Expression: '23+4*'. Read '2' (digit): s.push(2).",
-      array: [2, null, null, null, null],
+      description: `Expression: '${expression}'. Evaluation starts with a real input expression.`,
+      array: [null],
       pointers: { top: 0 },
-      highlightIndices: [0],
-      variables: { symbol: '2', action: "push 2", stack: "[2]" },
+      variables: { expression },
     },
     {
-      description: "Read '3' (digit): s.push(3).",
-      array: [2, 3, null, null, null],
-      pointers: { top: 1 },
-      highlightIndices: [1],
-      variables: { symbol: '3', action: "push 3", stack: "[2, 3]" },
-    },
-    {
-      description: "Read '+': Operator! pop1 = 3, pop2 = 2. result = pop2 + pop1 = 2 + 3 = 5. s.push(5).",
-      array: [5, null, null, null, null],
+      description: `Evaluation complete. Top of stack = ${result}.`,
+      array: [result],
       pointers: { top: 0 },
-      highlightIndices: [0],
-      variables: { symbol: '+', pop1: 3, pop2: 2, result: 5, stack: "[5]" },
-    },
-    {
-      description: "Read '4' (digit): s.push(4).",
-      array: [5, 4, null, null, null],
-      pointers: { top: 1 },
-      highlightIndices: [1],
-      variables: { symbol: '4', action: "push 4", stack: "[5, 4]" },
-    },
-    {
-      description: "Read '*': Operator! pop1 = 4, pop2 = 5. result = pop2 * pop1 = 5 * 4 = 20. s.push(20).",
-      array: [20, null, null, null, null],
-      pointers: { top: 0 },
-      highlightIndices: [0],
-      variables: { symbol: '*', pop1: 4, pop2: 5, result: 20, stack: "[20]" },
-    },
-    {
-      description: "Evaluation complete. Top of stack = 20.",
-      array: [20, null, null, null, null],
-      pointers: { top: 0 },
-      variables: { result: 20, status: "Complete" },
+      variables: { result, status: "Complete" },
     },
   ];
 
@@ -2684,457 +3353,7 @@ function simulatePostfixEvaluation(rawCode: string, clean: string): ExecutionRes
       ? "Postfix expression evaluated using std::stack<int> in O(n) time!"
       : "For digits push (symbol - '0'); for operators pop pop1 then pop2, evaluate pop2 [op] pop1, and push result.",
     frames,
-    stdout: `Enter postfix expression: 23+4*\nResult = 20\n\nProcess returned 0 (0x0)`,
-    exitCode: 0,
-  };
-}
-
-/**
- * Task 1.6: squareelement (In-place squaring)
- */
-function simulateSquareElement(rawCode: string, clean: string): ExecutionResult {
-  const isGoal = /arra\[i\]\s*\*=\s*arra\[i\]|arra\[i\]\s*=\s*arra\[i\]\s*\*\s*arra\[i\]/.test(clean);
-
-  const frames: SimulationFrame[] = [
-    {
-      description: "Initial array before squaring: [2, 3, 4, 5, 6].",
-      array: [2, 3, 4, 5, 6],
-      variables: { status: "Initial values" },
-    },
-    {
-      description: "squareelement: arra[0] = 2 * 2 = 4, arra[1] = 3 * 3 = 9.",
-      array: [4, 9, 4, 5, 6],
-      pointers: { i: 1 },
-      highlightIndices: [0, 1],
-      variables: { i: 1, "arra[0]": 4, "arra[1]": 9 },
-    },
-    {
-      description: "squareelement: arra[2] = 4 * 4 = 16, arra[3] = 5 * 5 = 25.",
-      array: [4, 9, 16, 25, 6],
-      pointers: { i: 3 },
-      highlightIndices: [2, 3],
-      variables: { i: 3, "arra[2]": 16, "arra[3]": 25 },
-    },
-    {
-      description: "squareelement: arra[4] = 6 * 6 = 36. All elements squared in-place!",
-      array: [4, 9, 16, 25, 36],
-      pointers: { i: 4 },
-      highlightIndices: [4],
-      variables: { i: 4, "arra[4]": 36 },
-    },
-    {
-      description: "Final array after squaring: [4, 9, 16, 25, 36].",
-      array: [4, 9, 16, 25, 36],
-      variables: { status: "Squaring complete" },
-    },
-  ];
-
-  return {
-    success: true,
-    isTaskGoalAchieved: isGoal,
-    goalFeedback: isGoal
-      ? "All elements squared in-place (arra[i] *= arra[i])!"
-      : "Ensure squareelement multiplies each element by itself (arra[i] *= arra[i]).",
-    frames,
-    stdout: `--- عناصر المصفوفة قبل التربيع ---
-the element 1 = 2
-the element 2 = 3
-the element 3 = 4
-the element 4 = 5
-the element 5 = 6
-
---- جاري تربيع جميع العناصر... ---
-
---- عناصر المصفوفة بعد التربيع ---
-the element 1 = 4
-the element 2 = 9
-the element 3 = 16
-the element 4 = 25
-the element 5 = 36
-
-Process returned 0 (0x0)`,
-    exitCode: 0,
-  };
-}
-
-/**
- * Task 1.7: subelement (In-place scalar subtraction)
- */
-function simulateSubElement(rawCode: string, clean: string): ExecutionResult {
-  const isGoal = /arra\[i\]\s*-=\s*ele|arra\[i\]\s*=\s*arra\[i\]\s*-\s*ele/.test(clean);
-
-  const frames: SimulationFrame[] = [
-    {
-      description: "Initial array before subtraction: [15, 25, 35, 45, 55]. ele = 5.",
-      array: [15, 25, 35, 45, 55],
-      variables: { status: "Before subtraction", ele: 5 },
-    },
-    {
-      description: "subelement: arra[0] (15) - 5 = 10, arra[1] (25) - 5 = 20.",
-      array: [10, 20, 35, 45, 55],
-      pointers: { i: 1 },
-      highlightIndices: [0, 1],
-      variables: { i: 1, "arra[0]": 10, "arra[1]": 20 },
-    },
-    {
-      description: "subelement: arra[2] (35) - 5 = 30, arra[3] (45) - 5 = 40.",
-      array: [10, 20, 30, 40, 55],
-      pointers: { i: 3 },
-      highlightIndices: [2, 3],
-      variables: { i: 3, "arra[2]": 30, "arra[3]": 40 },
-    },
-    {
-      description: "subelement: arra[4] (55) - 5 = 50. All elements reduced by 5!",
-      array: [10, 20, 30, 40, 50],
-      pointers: { i: 4 },
-      highlightIndices: [4],
-      variables: { i: 4, "arra[4]": 50 },
-    },
-    {
-      description: "Final array after subtraction: [10, 20, 30, 40, 50].",
-      array: [10, 20, 30, 40, 50],
-      variables: { status: "Subtraction complete" },
-    },
-  ];
-
-  return {
-    success: true,
-    isTaskGoalAchieved: isGoal,
-    goalFeedback: isGoal
-      ? "All elements subtracted by ele in-place (arra[i] -= ele)!"
-      : "Ensure subelement subtracts ele from each element (arra[i] -= ele).",
-    frames,
-    stdout: `--- عناصر المصفوفة قبل الطرح ---
-the element 1 = 15
-the element 2 = 25
-the element 3 = 35
-the element 4 = 45
-the element 5 = 55
-
---- جاري طرح الرقم 5 من جميع العناصر... ---
-
---- عناصر المصفوفة بعد الطرح ---
-the element 1 = 10
-the element 2 = 20
-the element 3 = 30
-the element 4 = 40
-the element 5 = 50
-
-Process returned 0 (0x0)`,
-    exitCode: 0,
-  };
-}
-
-/**
- * Task 3.6: allposition (Finding all occurrences with global flag)
- */
-function simulateAllPosition(rawCode: string, clean: string): ExecutionResult {
-  const isGoal = /if\s*\(arra\[i\]\s*==\s*num\)/.test(clean) && /x\s*=\s*true/.test(clean);
-
-  const frames: SimulationFrame[] = [
-    {
-      description: "Initial array: [15, 20, 15, 30, 15]. Target = 15. Flag x = false.",
-      array: [15, 20, 15, 30, 15],
-      pointers: { i: 0 },
-      highlightIndices: [0],
-      variables: { i: 0, target: 15, "arra[0]": 15, match: "true", outputIndices: "0" },
-    },
-    {
-      description: "Index 1: arra[1] = 20 != 15. No match.",
-      array: [15, 20, 15, 30, 15],
-      pointers: { i: 1 },
-      highlightIndices: [1],
-      variables: { i: 1, "arra[1]": 20, match: "false" },
-    },
-    {
-      description: "Index 2: arra[2] = 15 == 15! Match found at index 2.",
-      array: [15, 20, 15, 30, 15],
-      pointers: { i: 2 },
-      highlightIndices: [2],
-      variables: { i: 2, "arra[2]": 15, match: "true", outputIndices: "0, 2" },
-    },
-    {
-      description: "Index 3: arra[3] = 30 != 15. No match.",
-      array: [15, 20, 15, 30, 15],
-      pointers: { i: 3 },
-      highlightIndices: [3],
-      variables: { i: 3, "arra[3]": 30, match: "false" },
-    },
-    {
-      description: "Index 4: arra[4] = 15 == 15! Match found at index 4. All occurrences: 0, 2, 4.",
-      array: [15, 20, 15, 30, 15],
-      pointers: { i: 4 },
-      highlightIndices: [4],
-      variables: { i: 4, "arra[4]": 15, match: "true", outputIndices: "0, 2, 4", flag_x: "true" },
-    },
-  ];
-
-  return {
-    success: true,
-    isTaskGoalAchieved: isGoal,
-    goalFeedback: isGoal
-      ? "allposition correctly printed all match indices and updated global flag x!"
-      : "Check if arra[i] == num, print index i, and set global flag x = true.",
-    frames,
-    stdout: `--- برنامج البحث عن جميع مواقع العنصر ---
-عناصر المصفوفة هي: 15, 20, 15, 30, 15
-
-the positions of number:15  are : 0  2  4  
-
-Process returned 0 (0x0)`,
-    exitCode: 0,
-  };
-}
-
-/**
- * Task 3.7: searchValue (Dynamic array linear search)
- */
-function simulateSearchValue(rawCode: string, clean: string): ExecutionResult {
-  const isGoal = /if\s*\(a\[i\]\s*==\s*value\)\s*\{\s*return\s+i;\s*\}|if\s*\(a\[i\]\s*==\s*value\)\s*return\s+i;/.test(clean);
-
-  const frames: SimulationFrame[] = [
-    {
-      description: "Initial state: Array [12, 34, 56, 78, 90], searching for value 56.",
-      array: [12, 34, 56, 78, 90],
-      pointers: { i: 0 },
-      highlightIndices: [0],
-      variables: { i: 0, target: 56, "a[0]": 12, match: "false" },
-    },
-    {
-      description: "Index 1: a[1] = 34 != 56. Advancing to index 2.",
-      array: [12, 34, 56, 78, 90],
-      pointers: { i: 1 },
-      highlightIndices: [1],
-      variables: { i: 1, "a[1]": 34, match: "false" },
-    },
-    {
-      description: "Index 2: a[2] = 56 == 56! Match found at index 2. Returning 2.",
-      array: [12, 34, 56, 78, 90],
-      pointers: { i: 2 },
-      highlightIndices: [2],
-      variables: { i: 2, "a[2]": 56, match: "true", returnIndex: 2 },
-    },
-  ];
-
-  return {
-    success: true,
-    isTaskGoalAchieved: isGoal,
-    goalFeedback: isGoal
-      ? "searchValue located target at index 2 in O(n) linear time!"
-      : "Iterate through elements and return i if a[i] == value.",
-    frames,
-    stdout: `Searching for value: 56\nValue found at index: 2\n\nProcess returned 0 (0x0)`,
-    exitCode: 0,
-  };
-}
-
-/**
- * Task 3.8: search<T> (Generic Template Linear Search)
- */
-function simulateGenericSearch(rawCode: string, clean: string): ExecutionResult {
-  const isGoal = /template\s*<.*?typename|class\s+T>/.test(clean) && /arr\[i\]\s*==\s*target/.test(clean);
-
-  const frames: SimulationFrame[] = [
-    {
-      description: "Generic Search Type 1 (int[]): Searching 30 in [10, 20, 30, 40, 50]. Found at index 2.",
-      array: [10, 20, 30, 40, 50],
-      pointers: { i: 2 },
-      highlightIndices: [2],
-      variables: { type: "int", target: 30, indexFound: 2 },
-    },
-    {
-      description: "Generic Search Type 2 (string[]): Searching 'banana' in ['apple', 'banana', 'cherry']. Found at index 1.",
-      array: ["apple", "banana", "cherry"],
-      pointers: { i: 1 },
-      highlightIndices: [1],
-      variables: { type: "string", target: "banana", indexFound: 1 },
-    },
-    {
-      description: "Generic Search Type 3 (double[]): Searching 2.5 in [1.5, 2.5, 3.5]. Found at index 1.",
-      array: [1.5, 2.5, 3.5],
-      pointers: { i: 1 },
-      highlightIndices: [1],
-      variables: { type: "double", target: 2.5, indexFound: 1 },
-    },
-  ];
-
-  return {
-    success: true,
-    isTaskGoalAchieved: isGoal,
-    goalFeedback: isGoal
-      ? "Generic template search<T> successfully verified across int, string, and double types!"
-      : "Define template <typename T> int search(T arr[], int size, T target) and return i if arr[i] == target.",
-    frames,
-    stdout: `Index in nums: 2\nIndex in words: 1\nIndex in decimals: 1\n\nProcess returned 0 (0x0)`,
-    exitCode: 0,
-  };
-}
-
-/**
- * Task 3.9: Iterative & Recursive Binary Search with Overflow Guard
- */
-function simulateBinarySearchIterRec(rawCode: string, clean: string): ExecutionResult {
-  const isGoal = /mid\s*=\s*left\s*\+\s*\(right\s*-\s*left\)\s*\/\s*2/.test(clean) && /binarySearchRecursive/.test(clean);
-
-  const frames: SimulationFrame[] = [
-    {
-      description: "Initial state: Array of 9 sorted elements. left = 0, right = 8, target = 65.",
-      array: [10, 25, 35, 45, 55, 65, 75, 85, 95],
-      pointers: { left: 0, right: 8, mid: 4 },
-      highlightIndices: [4],
-      variables: { left: 0, right: 8, mid: 4, "arr[mid]": 55, target: 65, action: "55 < 65 -> left = mid + 1 (5)" },
-    },
-    {
-      description: "Iteration 2: Range [5..8]. mid = 5 + (8 - 5)/2 = 6. arr[6] = 75.",
-      array: [10, 25, 35, 45, 55, 65, 75, 85, 95],
-      pointers: { left: 5, right: 8, mid: 6 },
-      highlightIndices: [6],
-      variables: { left: 5, right: 8, mid: 6, "arr[mid]": 75, target: 65, action: "75 > 65 -> right = mid - 1 (5)" },
-    },
-    {
-      description: "Iteration 3: Range [5..5]. mid = 5. arr[5] = 65 == 65! Target found at index 5.",
-      array: [10, 25, 35, 45, 55, 65, 75, 85, 95],
-      pointers: { left: 5, right: 5, mid: 5 },
-      highlightIndices: [5],
-      variables: { left: 5, right: 5, mid: 5, "arr[5]": 65, target: 65, returnIndex: 5, match: "true" },
-    },
-  ];
-
-  return {
-    success: true,
-    isTaskGoalAchieved: isGoal,
-    goalFeedback: isGoal
-      ? "Binary search implemented with overflow-safe midpoint calculation and recursive alternative!"
-      : "Calculate mid = left + (right - left) / 2 and implement both iterative and recursive branches.",
-    frames,
-    stdout: `القيمة 65 موجودة في الموقع: 5\n\nProcess returned 0 (0x0)`,
-    exitCode: 0,
-  };
-}
-
-/**
- * Task 3.10: Unsorted Array Linear Search
- */
-function simulateLinearSearchUnsorted(rawCode: string, clean: string): ExecutionResult {
-  const isGoal = /if\s*\(arr\[i\]\s*==\s*target\)/.test(clean);
-
-  const frames: SimulationFrame[] = [
-    {
-      description: "Unsorted array: [45, 12, 78, 23, 67, 89, 34]. Target = 67.",
-      array: [45, 12, 78, 23, 67, 89, 34],
-      pointers: { i: 0 },
-      highlightIndices: [0],
-      variables: { i: 0, "arr[0]": 45, target: 67, match: "false" },
-    },
-    {
-      description: "Scanning indices 1 to 3: [12, 78, 23] != 67.",
-      array: [45, 12, 78, 23, 67, 89, 34],
-      pointers: { i: 3 },
-      highlightIndices: [1, 2, 3],
-      variables: { i: 3, "arr[3]": 23, target: 67, match: "false" },
-    },
-    {
-      description: "Index 4: arr[4] = 67 == 67! Match found. Returning index 4.",
-      array: [45, 12, 78, 23, 67, 89, 34],
-      pointers: { i: 4 },
-      highlightIndices: [4],
-      variables: { i: 4, "arr[4]": 67, target: 67, match: "true", returnIndex: 4 },
-    },
-  ];
-
-  return {
-    success: true,
-    isTaskGoalAchieved: isGoal,
-    goalFeedback: isGoal
-      ? "Linear search found 67 at index 4 in O(n) time!"
-      : "Loop through elements and return i if arr[i] == target.",
-    frames,
-    stdout: `القيمة 67 موجودة في الموقع: 4\n\nProcess returned 0 (0x0)`,
-    exitCode: 0,
-  };
-}
-
-/**
- * Task 5.1: 4x4 Matrix Transposition
- */
-function simulateMatrixTranspose(rawCode: string, clean: string): ExecutionResult {
-  const isGoal = /transpose\[j\]\[i\]\s*=\s*x\[i\]\[j\]/.test(clean);
-
-  const frames: SimulationFrame[] = [
-    {
-      description: "Original 4x4 matrix initialized in memory with 16 elements.",
-      array: [13, 2, -3, 6, -1, 0, -2, 4, 7, 9, -8, 11, 4, -5, -1, 3],
-      variables: { row0: "13, 2, -3, 6", row1: "-1, 0, -2, 4", row2: "7, 9, -8, 11", row3: "4, -5, -1, 3" },
-    },
-    {
-      description: "Transposing Row 0 into Column 0: transpose[0][0]=13, transpose[1][0]=2, transpose[2][0]=-3, transpose[3][0]=6.",
-      array: [13, -1, 7, 4, null, null, null, null, null, null, null, null, null, null, null, null],
-      highlightIndices: [0, 1, 2, 3],
-      variables: { col0: "13, 2, -3, 6" },
-    },
-    {
-      description: "Transposing all rows complete: rows swapped with columns (transpose[j][i] = x[i][j]).",
-      array: [13, -1, 7, 4, 2, 0, 9, -5, -3, -2, -8, -1, 6, 4, 11, 3],
-      variables: { status: "Transposition Complete", dimensions: "4x4" },
-    },
-  ];
-
-  return {
-    success: true,
-    isTaskGoalAchieved: isGoal,
-    goalFeedback: isGoal
-      ? "4x4 matrix successfully transposed: transpose[j][i] = x[i][j] in O(n²) time!"
-      : "Assign transpose[j][i] = x[i][j] in the nested loops.",
-    frames,
-    stdout: `Transposed Matrix:\n13\t-1\t7\t4\t\n2\t0\t9\t-5\t\n-3\t-2\t-8\t-1\t\n6\t4\t11\t3\t\n\nProcess returned 0 (0x0)`,
-    exitCode: 0,
-  };
-}
-
-/**
- * Task 7.10: Interactive Stack Operations & Menu System
- */
-function simulateStackMenuOperations(rawCode: string, clean: string): ExecutionResult {
-  const isGoal = /isEmpty/.test(clean) && /isFull/.test(clean) && /push/.test(clean) && /pop/.test(clean);
-
-  const frames: SimulationFrame[] = [
-    {
-      description: "Initial Stack: Empty. top = -1. isEmpty() = true.",
-      array: [null, null, null, null, null],
-      pointers: { top: -1 },
-      variables: { top: -1, isEmpty: "true", isFull: "false" },
-    },
-    {
-      description: "push(10), push(20), push(30): top increments to 2. Stack: [10, 20, 30].",
-      array: [10, 20, 30, null, null],
-      pointers: { top: 2 },
-      highlightIndices: [0, 1, 2],
-      variables: { top: 2, topValue: 30, count: 3 },
-    },
-    {
-      description: "peek(): Top element is 30. display(): Prints 30, 20, 10.",
-      array: [10, 20, 30, null, null],
-      pointers: { top: 2 },
-      highlightIndices: [2],
-      variables: { peekResult: 30, top: 2 },
-    },
-    {
-      description: "pop(): Removed 30. top decrements to 1. Stack: [10, 20].",
-      array: [10, 20, null, null, null],
-      pointers: { top: 1 },
-      highlightIndices: [1],
-      variables: { poppedValue: 30, top: 1, remaining: "10, 20" },
-    },
-  ];
-
-  return {
-    success: true,
-    isTaskGoalAchieved: isGoal,
-    goalFeedback: isGoal
-      ? "Stack menu system (push, pop, peek, isEmpty, isFull, display) operating in O(1) time!"
-      : "Complete isEmpty, isFull, push, pop, and peek functions.",
-    frames,
-    stdout: `Value pushed successfully.\nValue pushed successfully.\nValue pushed successfully.\nStack:\n30\n20\n10\nTop value: 30\nRemoved: 30\nStack:\n20\n10\n\nProcess returned 0 (0x0)`,
+    stdout: `Enter postfix expression: ${expression}\nResult = ${result}\n\nProcess returned 0 (0x0)`,
     exitCode: 0,
   };
 }
@@ -3148,16 +3367,12 @@ function simulateGeneric(rawCode: string, clean: string): ExecutionResult {
 
   return {
     success: true,
-    isTaskGoalAchieved: true,
-    goalFeedback: "Code executed successfully.",
-    frames: [
-      {
-        description: "Program executed in memory.",
-        array: [1, 2, 3],
-        variables: { exitCode },
-      }
-    ],
-    stdout: `Program executed successfully.\nProcess returned ${exitCode} (0x${exitCode.toString(16).toUpperCase()})`,
+    isTaskGoalAchieved: false,
+    goalFeedback: "The code was not mapped to a real data-structure simulator.",
+    frames: [],
+    stdout: `No simulated output was generated. Process returned ${exitCode} (0x${exitCode
+      .toString(16)
+      .toUpperCase()})`,
     exitCode,
   };
 }
